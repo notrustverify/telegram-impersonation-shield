@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: username-detector-bot
+    restart: unless-stopped
+    environment:
+      # Configure your bot token here
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      # Configure similarity detection
+      - SIMILARITY_THRESHOLD=0.94
+      - AUTO_MUTE_ENABLED=false
+      - AUTO_MUTE_THRESHOLD=0.94
+      - MUTE_DURATION_HOURS=24
+      - CHECK_COOLDOWN_MINUTES=10
+    volumes:
+      # Mount usernames.txt for easy updates
+      - ./usernames.txt:/app/usernames.txt
+      # Optionally mount a .env file if preferred over environment variables
+      - ./.env:/app/.env:ro
+    # Uncomment to use specific user ID to run the container
+    # user: "1000:1000"
+    # Health check to ensure bot is running
+    healthcheck:
+      test: ["CMD", "ps", "aux", "|", "grep", "username-detector"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s 

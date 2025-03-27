@@ -1,0 +1,42 @@
+# List of usernames to check for similarity
+# Each line is a username, lines starting with # are comments
+
+# Official accounts
+alephium
+alph_official
+alphofficial
+alephium_org
+alph_foundation
+
+# Team members
+alephium_team
+alph_dev
+alph_developer
+alephium_dev
+alph_support
+
+# Variations that might be used by impersonators
+alephium_admin
+alephium_official
+alephiumorg
+alphium
+alph_org
+alph_team
+alephium_support
+aleph_official
+
+#Community Mods
+cgi_bin
+cgi-bin
+diomark0
+babyxdd
+
+#Core Contributors
+MaudBannwart
+polto
+vladm9
+ratko42
+wachmc
+mikae
+nop_33
+h0ngcha0
