@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -11,60 +13,63 @@ import (
 // ExceptionsManager handles exceptions for usernames that should be ignored
 // in similarity checks
 type ExceptionsManager struct {
-	Exceptions map[string]bool // Map of usernames to ignore
-	FilePath   string
+	Exceptions map[int64]bool // Map of user IDs to ignore
+	filePath   string
 	mutex      sync.RWMutex // Mutex for thread safety
 }
 
-// NewExceptionsManager creates a new exceptions manager
+// NewExceptionsManager creates a new ExceptionsManager and loads exceptions from the specified file
 func NewExceptionsManager(filePath string) *ExceptionsManager {
-	manager := &ExceptionsManager{
-		Exceptions: make(map[string]bool),
-		FilePath:   filePath,
+	em := &ExceptionsManager{
+		Exceptions: make(map[int64]bool),
+		filePath:   filePath,
 	}
-
-	// Load exceptions from file if it exists
-	manager.LoadExceptions()
-
-	return manager
+	em.LoadExceptions()
+	return em
 }
 
 // LoadExceptions loads exceptions from the file
-func (em *ExceptionsManager) LoadExceptions() error {
-	// Check if exceptions file exists
-	if _, err := os.Stat(em.FilePath); os.IsNotExist(err) {
-		log.Printf("Exceptions file not found: %s. Starting with empty exceptions list.", em.FilePath)
-		return nil
-	}
-
-	file, err := os.Open(em.FilePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
+func (em *ExceptionsManager) LoadExceptions() {
 	em.mutex.Lock()
 	defer em.mutex.Unlock()
 
 	// Clear existing exceptions
-	em.Exceptions = make(map[string]bool)
+	em.Exceptions = make(map[int64]bool)
 
+	// Check if file exists
+	if _, err := os.Stat(em.filePath); os.IsNotExist(err) {
+		log.Printf("Exceptions file not found: %s", em.filePath)
+		return
+	}
+
+	// Open file
+	file, err := os.Open(em.filePath)
+	if err != nil {
+		log.Printf("Error opening exceptions file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Read line by line
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		username := strings.TrimSpace(scanner.Text())
-		// Skip empty lines and comments
-		if username != "" && !strings.HasPrefix(username, "#") {
-			// Convert to lowercase for case-insensitive comparison
-			em.Exceptions[strings.ToLower(username)] = true
+		line := strings.TrimSpace(scanner.Text())
+		// Skip comments and empty lines
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
 		}
+
+		// Parse user ID
+		userID, err := strconv.ParseInt(line, 10, 64)
+		if err != nil {
+			log.Printf("Error parsing user ID from line '%s': %v", line, err)
+			continue
+		}
+
+		em.Exceptions[userID] = true
 	}
 
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	log.Printf("Loaded %d exceptions from %s", len(em.Exceptions), em.FilePath)
-	return nil
+	log.Printf("Loaded %d user ID exceptions from %s", len(em.Exceptions), em.filePath)
 }
 
 // SaveExceptions saves the current exceptions to the file
@@ -72,75 +77,62 @@ func (em *ExceptionsManager) SaveExceptions() error {
 	em.mutex.RLock()
 	defer em.mutex.RUnlock()
 
-	file, err := os.Create(em.FilePath)
+	// Create or truncate file
+	file, err := os.Create(em.filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("error creating exceptions file: %v", err)
 	}
 	defer file.Close()
 
-	// Write a header comment
-	file.WriteString("# List of username exceptions\n")
-	file.WriteString("# These usernames will be ignored in similarity checks\n")
-	file.WriteString("# One username per line, lines starting with # are comments\n\n")
-
-	// Write all exceptions
-	for username := range em.Exceptions {
-		file.WriteString(username + "\n")
+	// Write header comment
+	_, err = fmt.Fprintf(file, "# List of user IDs to ignore in similarity checks\n")
+	if err != nil {
+		return fmt.Errorf("error writing header: %v", err)
 	}
 
-	log.Printf("Saved %d exceptions to %s", len(em.Exceptions), em.FilePath)
+	// Write each user ID
+	for userID := range em.Exceptions {
+		_, err = fmt.Fprintf(file, "%d\n", userID)
+		if err != nil {
+			return fmt.Errorf("error writing user ID: %v", err)
+		}
+	}
+
+	log.Printf("Saved %d user ID exceptions to %s", len(em.Exceptions), em.filePath)
 	return nil
 }
 
-// AddException adds a username to the exceptions list and saves to file
-func (em *ExceptionsManager) AddException(username string) error {
-	// Convert to lowercase for case-insensitive comparison
-	username = strings.ToLower(strings.TrimSpace(username))
-
-	// Skip empty usernames
-	if username == "" {
-		return nil
-	}
-
+// AddException adds a user ID to the exceptions list
+func (em *ExceptionsManager) AddException(userID int64) error {
 	em.mutex.Lock()
-	em.Exceptions[username] = true
+	em.Exceptions[userID] = true
 	em.mutex.Unlock()
-
 	return em.SaveExceptions()
 }
 
-// RemoveException removes a username from the exceptions list and saves to file
-func (em *ExceptionsManager) RemoveException(username string) error {
-	// Convert to lowercase for case-insensitive comparison
-	username = strings.ToLower(strings.TrimSpace(username))
-
+// RemoveException removes a user ID from the exceptions list
+func (em *ExceptionsManager) RemoveException(userID int64) error {
 	em.mutex.Lock()
-	delete(em.Exceptions, username)
+	delete(em.Exceptions, userID)
 	em.mutex.Unlock()
-
 	return em.SaveExceptions()
 }
 
-// IsExcepted checks if a username is in the exceptions list
-func (em *ExceptionsManager) IsExcepted(username string) bool {
-	// Convert to lowercase for case-insensitive comparison
-	username = strings.ToLower(strings.TrimSpace(username))
-
+// IsExcepted checks if a user ID is in the exceptions list
+func (em *ExceptionsManager) IsExcepted(userID int64) bool {
 	em.mutex.RLock()
 	defer em.mutex.RUnlock()
-
-	return em.Exceptions[username]
+	return em.Exceptions[userID]
 }
 
-// ListExceptions returns a slice of all exceptions
-func (em *ExceptionsManager) ListExceptions() []string {
+// ListExceptions returns a slice of all excepted user IDs
+func (em *ExceptionsManager) ListExceptions() []int64 {
 	em.mutex.RLock()
 	defer em.mutex.RUnlock()
 
-	exceptions := make([]string, 0, len(em.Exceptions))
-	for username := range em.Exceptions {
-		exceptions = append(exceptions, username)
+	exceptions := make([]int64, 0, len(em.Exceptions))
+	for userID := range em.Exceptions {
+		exceptions = append(exceptions, userID)
 	}
-
 	return exceptions
 }
