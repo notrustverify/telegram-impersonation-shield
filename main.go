@@ -283,6 +283,8 @@ type BotSettings struct {
 	AdminCacheTime  map[int64]time.Time
 	// Exceptions manager
 	Exceptions *ExceptionsManager
+	// Exception Managers Auth
+	ExceptionAuth *ExceptionManagersAuth
 }
 
 // IsRecentlyChecked determines if a user was recently checked
@@ -513,6 +515,9 @@ func main() {
 	// Get updates channel
 	updates := bot.GetUpdatesChan(updateConfig)
 
+	// Initialize exception managers auth
+	exceptionAuth := NewExceptionManagersAuth("exception_managers.txt")
+
 	// Bot settings
 	settings := BotSettings{
 		SimilarityThreshold: 0.8,              // Default threshold for similarity detection
@@ -526,6 +531,7 @@ func main() {
 		AdminInfo:           make(map[int64][]AdminInfo),
 		AdminCacheTime:      make(map[int64]time.Time),
 		Exceptions:          NewExceptionsManager("exceptions.txt"),
+		ExceptionAuth:       exceptionAuth,
 	}
 
 	// Set similarity threshold from env or default to 0.8
@@ -796,11 +802,16 @@ func main() {
 						"- `/threshold [value]` - Set similarity threshold (0.1-0.9, default: 0.75)\n" +
 						"- `/automute [on/off]` - Enable/disable automatic muting\n" +
 						"- `/cooldown [minutes]` - Set how often the same user is checked (0 = always)\n" +
+						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n\n" +
+						"**🔑 Authorized User Commands** (only for users in the file):\n" +
 						"- `/addexception [user_id]` - Add user ID to exceptions list (ignored in checks)\n" +
 						"- `/removeexception [user_id]` - Remove user ID from exceptions list\n" +
-						"- `/listexceptions` - Show all user IDs in exceptions list\n" +
-						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n\n" +
-						"ℹ️ **Note**: Most commands only work for admins in group chats.\n\n" +
+						"- `/listexceptions` - Show all user IDs in exceptions list\n\n" +
+						"**👑 Admin-only Commands**:\n" +
+						"- `/addauthmanager [user_id]` - Add a user who can manage exceptions without being admin\n" +
+						"- `/removeauthmanager [user_id]` - Remove a user from exception managers\n" +
+						"- `/listauthmanagers` - List all users authorized to manage exceptions\n\n" +
+						"ℹ️ **Note**: Exception management commands can ONLY be used by authorized users listed in the file, not by regular admins.\n\n" +
 						"ℹ️ **Getting User IDs**:\n" +
 						"To get a user's ID:\n" +
 						"1. Message @userinfobot\n" +
@@ -1196,10 +1207,13 @@ func main() {
 					bot.Send(msg)
 
 				case "addexception":
-					// Check if user is admin
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in group %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Check if user is authorized to manage exceptions
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /addexception but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to manage exceptions. Your user ID must be in the file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1249,10 +1263,13 @@ func main() {
 					bot.Send(msg)
 
 				case "removeexception":
-					// Check if user is admin
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in group %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Check if user is authorized to manage exceptions
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /removeexception but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1298,10 +1315,13 @@ func main() {
 					bot.Send(msg)
 
 				case "listexceptions":
-					// Check if user is admin
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in group %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Check if user is authorized to manage exceptions
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /listexceptions but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1317,6 +1337,117 @@ func main() {
 							responseText += fmt.Sprintf("%d. User ID: %d\n", i+1, userID)
 						}
 						responseText += "\nThese users are ignored in similarity checks."
+					}
+
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
+					bot.Send(msg)
+
+				case "addauthmanager":
+					// Only allow admins to add authorized exception managers
+					if !isAdmin {
+						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
+							update.Message.From.ID, command, update.Message.Chat.ID)
+						continue
+					}
+
+					// Parse user ID to add as authorized manager
+					args := update.Message.CommandArguments()
+					if args == "" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Please specify a user ID to add as an authorized exception manager.\n\n"+
+								"Format: /addauthmanager [user_id]\n\n"+
+								"To get a user's ID:\n"+
+								"1. Message @userinfobot\n"+
+								"2. Forward a message from the user\n"+
+								"3. The bot will show you the user's ID")
+						bot.Send(msg)
+						continue
+					}
+
+					// Parse user ID
+					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
+					if err != nil {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Invalid user ID. Please provide a valid numeric user ID.")
+						bot.Send(msg)
+						continue
+					}
+
+					// Add user ID to authorized managers
+					err = settings.ExceptionAuth.AddAuthorizedUser(userID)
+					if err != nil {
+						log.Printf("ERROR: Failed to add authorized manager with ID %d: %v", userID, err)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Failed to add authorized manager with ID %d: %v", userID, err))
+						bot.Send(msg)
+						continue
+					}
+
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Added user ID %d to authorized exception managers. This user can now manage exceptions.", userID))
+					bot.Send(msg)
+
+				case "removeauthmanager":
+					// Only allow admins to remove authorized exception managers
+					if !isAdmin {
+						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
+							update.Message.From.ID, command, update.Message.Chat.ID)
+						continue
+					}
+
+					// Parse user ID to remove from authorized managers
+					args := update.Message.CommandArguments()
+					if args == "" {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Please specify a user ID to remove from authorized exception managers.\n\n"+
+								"Format: /removeauthmanager [user_id]")
+						bot.Send(msg)
+						continue
+					}
+
+					// Parse user ID
+					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
+					if err != nil {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Invalid user ID. Please provide a valid numeric user ID.")
+						bot.Send(msg)
+						continue
+					}
+
+					// Remove user ID from authorized managers
+					err = settings.ExceptionAuth.RemoveAuthorizedUser(userID)
+					if err != nil {
+						log.Printf("ERROR: Failed to remove authorized manager with ID %d: %v", userID, err)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Failed to remove authorized manager with ID %d: %v", userID, err))
+						bot.Send(msg)
+						continue
+					}
+
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+						fmt.Sprintf("Removed user ID %d from authorized exception managers. This user can no longer manage exceptions.", userID))
+					bot.Send(msg)
+
+				case "listauthmanagers":
+					// Only allow admins to list authorized exception managers
+					if !isAdmin {
+						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
+							update.Message.From.ID, command, update.Message.Chat.ID)
+						continue
+					}
+
+					// Get list of authorized managers
+					managers := settings.ExceptionAuth.ListAuthorizedUsers()
+
+					var responseText string
+					if len(managers) == 0 {
+						responseText = "No authorized exception managers configured. Use /addauthmanager to add users who can manage exceptions."
+					} else {
+						responseText = fmt.Sprintf("📋 Authorized Exception Managers (%d users):\n\n", len(managers))
+						for i, userID := range managers {
+							responseText += fmt.Sprintf("%d. User ID: %d\n", i+1, userID)
+						}
+						responseText += "\nThese users can manage exceptions without being admins."
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
