@@ -1,0 +1,5 @@
+# List of username exceptions
+# These usernames will be ignored in similarity checks
+# One username per line, lines starting with # are comments
+
+cgi-bin

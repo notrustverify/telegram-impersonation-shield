@@ -61,3 +61,4 @@ dist/
 # Temporary files
 tmp/
 temp/ 
+docker-compose.yml
