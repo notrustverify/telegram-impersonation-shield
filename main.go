@@ -66,6 +66,12 @@ var KnownUsernames = []string{
 	// Add more usernames as needed
 }
 
+// normalizeName removes spaces and converts to lowercase for comparison
+func normalizeName(name string) string {
+	// Remove all spaces and convert to lowercase
+	return strings.ToLower(strings.ReplaceAll(name, " ", ""))
+}
+
 // JaroWinkler calculates the Jaro-Winkler similarity between two strings
 // Returns a value between 0 (completely different) and 1 (identical)
 func JaroWinkler(s1, s2 string) float64 {
@@ -1439,8 +1445,9 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := strings.ToLower(admin.FirstName)
-				similarity := JaroWinkler(username, adminFirstNameLower)
+				adminFirstNameLower := normalizeName(admin.FirstName)
+				firstNameLower := normalizeName(firstName)
+				similarity := JaroWinkler(firstNameLower, adminFirstNameLower)
 				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   admin.FirstName, // First name, no @ symbol
@@ -1500,8 +1507,9 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := strings.ToLower(admin.FirstName)
-				similarity := JaroWinkler(firstName, adminFirstNameLower)
+				adminFirstNameLower := normalizeName(admin.FirstName)
+				firstNameLower := normalizeName(firstName)
+				similarity := JaroWinkler(firstNameLower, adminFirstNameLower)
 				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   admin.FirstName, // First name, no @ symbol
