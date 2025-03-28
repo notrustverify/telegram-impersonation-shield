@@ -681,50 +681,43 @@ func main() {
 				update.Message.Chat.Type,
 				update.Message.Text)
 
-			// Check user if they have username or first name
-			if update.Message.From != nil {
-				log.Printf("DEBUG: Preparing to check user ID %d for impersonation", update.Message.From.ID)
+			// Check user if they have username or first name - only in group chats
+			if update.Message.From != nil && (update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup()) {
+				log.Printf("DEBUG: Preparing to check user ID %d for impersonation in group chat", update.Message.From.ID)
 
 				// Don't check too frequently
 				if !settings.IsRecentlyChecked(update.Message.From.ID) {
 					log.Printf("DEBUG: User ID %d passed cooldown check", update.Message.From.ID)
 
 					// Skip checks for admins using the cached admin list
-					if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
-						if settings.IsUserAdmin(bot, update.Message.Chat.ID, update.Message.From.ID) {
-							log.Printf("DEBUG: User ID %d (@%s) is an admin, skipping username check",
-								update.Message.From.ID, update.Message.From.UserName)
-							// DON'T continue here - that would skip command processing entirely!
-							// We want to skip similarity checking but still process commands
-							log.Printf("DEBUG: Admin user will skip similarity checks but still process commands")
-							// Mark as checked for admin users too
-							settings.MarkUserAsChecked(update.Message.From.ID, update.Message.From.UserName)
-						} else {
-							log.Printf("DEBUG: User ID %d is not an admin, proceeding with check", update.Message.From.ID)
-
-							// Only check non-admins
-							// Check username/first name and auto-mute if necessary
-							if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
-								log.Printf("DEBUG: STARTING similarity check for user ID %d", update.Message.From.ID)
-								checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
-									update.Message.From.UserName, update.Message.From.FirstName, update.Message.From.LastName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
-								log.Printf("DEBUG: COMPLETED similarity check for user ID %d", update.Message.From.ID)
-							}
-						}
+					if settings.IsUserAdmin(bot, update.Message.Chat.ID, update.Message.From.ID) {
+						log.Printf("DEBUG: User ID %d (@%s) is an admin, skipping username check",
+							update.Message.From.ID, update.Message.From.UserName)
+						// DON'T continue here - that would skip command processing entirely!
+						// We want to skip similarity checking but still process commands
+						log.Printf("DEBUG: Admin user will skip similarity checks but still process commands")
+						// Mark as checked for admin users too
+						settings.MarkUserAsChecked(update.Message.From.ID, update.Message.From.UserName)
 					} else {
-						log.Printf("DEBUG: Not a group chat, proceeding with check regardless of admin status")
-						// Check private chat messages too
+						log.Printf("DEBUG: User ID %d is not an admin, proceeding with check", update.Message.From.ID)
+
+						// Only check non-admins
+						// Check username/first name and auto-mute if necessary
 						if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
+							log.Printf("DEBUG: STARTING similarity check for user ID %d", update.Message.From.ID)
 							checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
 								update.Message.From.UserName, update.Message.From.FirstName, update.Message.From.LastName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
+							log.Printf("DEBUG: COMPLETED similarity check for user ID %d", update.Message.From.ID)
 						}
 					}
 				} else {
 					log.Printf("DEBUG: User ID %d (@%s) was recently checked, skipping due to cooldown",
 						update.Message.From.ID, update.Message.From.UserName)
 				}
-			} else {
+			} else if update.Message.From == nil {
 				log.Printf("DEBUG: Message has no From field, cannot check user")
+			} else {
+				log.Printf("DEBUG: Message not in a group chat, skipping impersonation check")
 			}
 
 			// Process commands
