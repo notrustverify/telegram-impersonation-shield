@@ -508,6 +508,7 @@ func main() {
 	// Set up update configuration
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
+	updateConfig.AllowedUpdates = []string{"message", "my_chat_member", "chat_member"}
 
 	// Get updates channel
 	updates := bot.GetUpdatesChan(updateConfig)
@@ -666,49 +667,6 @@ func main() {
 					// Check permissions
 					CheckBotPermissions(bot, update.Message.Chat.ID)
 				}
-			}
-		}
-
-		// Check new users joining the chat
-		if update.Message != nil && update.Message.NewChatMembers != nil {
-			log.Printf("DEBUG: New chat members detected in chat ID %d", update.Message.Chat.ID)
-
-			for _, newUser := range update.Message.NewChatMembers {
-				log.Printf("DEBUG: New user joined - ID: %d, Username: @%s, First Name: %s",
-					newUser.ID, newUser.UserName, newUser.FirstName)
-
-				// Check if user has a username or first name to check
-				if newUser.UserName == "" && newUser.FirstName == "" {
-					log.Printf("DEBUG: New user ID %d has no username or first name, skipping", newUser.ID)
-					continue
-				}
-
-				// If user has no username, log that we're checking first name
-				if newUser.UserName == "" && newUser.FirstName != "" {
-					log.Printf("DEBUG: New user ID %d has no username, checking first name '%s' instead",
-						newUser.ID, newUser.FirstName)
-				}
-
-				// Skip checks for admins using the cached admin list
-				if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
-					if settings.IsUserAdmin(bot, update.Message.Chat.ID, newUser.ID) {
-						log.Printf("DEBUG: New user ID %d (@%s) is an admin, skipping check",
-							newUser.ID, newUser.UserName)
-						continue
-					}
-				}
-
-				// Process non-admin new users
-				var displayName string
-				if newUser.UserName != "" {
-					displayName = "@" + newUser.UserName
-				} else {
-					displayName = newUser.FirstName
-				}
-				log.Printf("DEBUG: Checking new user %s (ID: %d) for similarity", displayName, newUser.ID)
-
-				// Check username and auto-mute if necessary
-				checkAndMuteUser(bot, &settings, update.Message.Chat.ID, newUser.ID, newUser.UserName, newUser.FirstName, newUser.LastName, true, "", 0, update.Message.Chat.Title)
 			}
 		}
 
