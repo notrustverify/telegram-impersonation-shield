@@ -266,6 +266,7 @@ type BotSettings struct {
 	AutoMuteThreshold   float64
 	MuteDuration        time.Duration
 	CheckCooldown       time.Duration // How long to wait before checking the same user again
+	DeleteMessages      bool          // Whether to delete messages from users with similar usernames
 	RecentlyChecked     map[int64]RecentlyCheckedUser
 	Mutex               sync.RWMutex
 	// Cache for admin usernames by chat ID
@@ -453,6 +454,16 @@ func ScanGroupForSuspiciousUsernames(bot *tgbotapi.BotAPI, settings *BotSettings
 	bot.Send(editMsg)
 }
 
+// DeleteMessage deletes a message from a chat
+func DeleteMessage(bot *tgbotapi.BotAPI, chatID int64, messageID int) error {
+	deleteConfig := tgbotapi.DeleteMessageConfig{
+		ChatID:    chatID,
+		MessageID: messageID,
+	}
+	_, err := bot.Request(deleteConfig)
+	return err
+}
+
 func main() {
 	// Try to load from .env file first
 	loadEnvFile(".env")
@@ -500,6 +511,7 @@ func main() {
 		AutoMuteThreshold:   0.9,              // Higher threshold for auto-mute (very similar usernames)
 		MuteDuration:        24 * time.Hour,   // Default mute duration: 24 hours
 		CheckCooldown:       30 * time.Minute, // Don't check the same user more often than this
+		DeleteMessages:      true,             // Default to deleting messages
 		RecentlyChecked:     make(map[int64]RecentlyCheckedUser),
 		AdminInfo:           make(map[int64][]AdminInfo),
 		AdminCacheTime:      make(map[int64]time.Time),
@@ -547,6 +559,17 @@ func main() {
 			} else {
 				log.Printf("Using check cooldown from environment: %.1f minutes", minutes)
 			}
+		}
+	}
+
+	// Set delete messages from env or use default
+	if deleteStr := os.Getenv("DELETE_MESSAGES"); deleteStr != "" {
+		if deleteStr == "true" || deleteStr == "1" || deleteStr == "yes" {
+			settings.DeleteMessages = true
+			log.Printf("Message deletion is enabled")
+		} else if deleteStr == "false" || deleteStr == "0" || deleteStr == "no" {
+			settings.DeleteMessages = false
+			log.Printf("Message deletion is disabled")
 		}
 	}
 
@@ -807,7 +830,8 @@ func main() {
 						"- `/cooldown [minutes]` - Set how often the same user is checked (0 = always)\n" +
 						"- `/addexception [user_id]` - Add user ID to exceptions list (ignored in checks)\n" +
 						"- `/removeexception [user_id]` - Remove user ID from exceptions list\n" +
-						"- `/listexceptions` - Show all user IDs in exceptions list\n\n" +
+						"- `/listexceptions` - Show all user IDs in exceptions list\n" +
+						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n\n" +
 						"ℹ️ **Note**: Most commands only work for admins in group chats.\n\n" +
 						"ℹ️ **Getting User IDs**:\n" +
 						"To get a user's ID:\n" +
@@ -1296,6 +1320,38 @@ func main() {
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
 					bot.Send(msg)
 
+				case "deletemessages":
+					// Parse delete messages setting
+					args := update.Message.CommandArguments()
+					if args == "" {
+						status := "disabled"
+						if settings.DeleteMessages {
+							status = "enabled"
+						}
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Message deletion is currently %s. Use /deletemessages on or /deletemessages off to change.",
+								status))
+						bot.Send(msg)
+						continue
+					}
+
+					args = strings.ToLower(args)
+					if args == "on" || args == "enable" || args == "true" || args == "1" {
+						settings.DeleteMessages = true
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Message deletion enabled. Messages from users with similar usernames will be automatically deleted.")
+						bot.Send(msg)
+					} else if args == "off" || args == "disable" || args == "false" || args == "0" {
+						settings.DeleteMessages = false
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Message deletion disabled. Messages from users with similar usernames will be kept.")
+						bot.Send(msg)
+					} else {
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Invalid value. Use 'on' or 'off' to enable or disable message deletion.")
+						bot.Send(msg)
+					}
+
 				}
 			} else {
 				// Instead, just log that we received a text message but ignoring it
@@ -1446,6 +1502,16 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		// Mark this user as checked to avoid spamming
 		settings.MarkUserAsChecked(userID, username)
 
+		// Delete the message if enabled and it's not a new user (i.e., it's a message)
+		if settings.DeleteMessages && !isNewUser && replyToMessageID > 0 {
+			err := DeleteMessage(bot, chatID, replyToMessageID)
+			if err != nil {
+				log.Printf("ERROR: Failed to delete message from user with similar username: %v", err)
+			} else {
+				log.Printf("DEBUG: Deleted message %d from user with similar username", replyToMessageID)
+			}
+		}
+
 		// Build notification message
 		var notificationText string
 		var userIdentifier string
@@ -1483,8 +1549,22 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			}
 
 			for _, result := range similarToAdmins {
-				notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
-					result.Username, result.Similarity*100)
+				// Find the admin info to get their user ID
+				var adminUserID int64
+				for _, admin := range adminInfo {
+					if strings.TrimPrefix(result.Username, "@") == admin.Username || result.Username == admin.FirstName {
+						adminUserID = admin.UserID
+						break
+					}
+				}
+
+				if adminUserID > 0 {
+					notificationText += fmt.Sprintf("%s (ID: %d) (%.2f%% similarity)\n",
+						strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
+				} else {
+					notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
+						strings.TrimPrefix(result.Username, "@"), result.Similarity*100)
+				}
 			}
 		}
 
@@ -1495,6 +1575,11 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 				notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
 					result.Username, result.Similarity*100)
 			}
+		}
+
+		// Add deletion info to notification if applicable
+		if settings.DeleteMessages && !isNewUser && replyToMessageID > 0 {
+			notificationText += "\n\n🗑️ The message has been deleted to prevent potential scams."
 		}
 
 		notificationText += fmt.Sprintf("\n\n🚨 Warning 🚨\n\n" +
@@ -1599,12 +1684,6 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		// Create message config
 		msg := tgbotapi.NewMessage(chatID, notificationText)
-
-		// Set reply to message ID if provided
-		if replyToMessageID > 0 {
-			msg.ReplyToMessageID = replyToMessageID
-			log.Printf("DEBUG: Setting reply to message ID %d", replyToMessageID)
-		}
 
 		// Send notification to the chat
 		_, err := bot.Send(msg)
