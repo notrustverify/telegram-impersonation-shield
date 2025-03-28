@@ -1304,7 +1304,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		// Username similarities
 		if len(similarUsernames) > 0 {
-			notificationText += "has similar username to official accounts:\n\n"
+			notificationText += " has similar username to official accounts:\n\n"
 			for _, result := range similarUsernames {
 				notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
 					result.Username, result.Similarity*100)

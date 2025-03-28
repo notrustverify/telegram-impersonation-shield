@@ -20,8 +20,6 @@ alephium_admin
 alephium_official
 alephiumorg
 alphium
-alph_org
-alph_team
 alephium_support
 aleph_official
 
