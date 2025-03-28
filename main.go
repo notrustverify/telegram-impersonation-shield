@@ -267,6 +267,7 @@ type BotSettings struct {
 	MuteDuration        time.Duration
 	CheckCooldown       time.Duration // How long to wait before checking the same user again
 	DeleteMessages      bool          // Whether to delete messages from users with similar usernames
+	AuditGroupID        int64         // Group ID to send audit messages to
 	RecentlyChecked     map[int64]RecentlyCheckedUser
 	Mutex               sync.RWMutex
 	// Cache for admin usernames by chat ID
@@ -512,6 +513,7 @@ func main() {
 		MuteDuration:        24 * time.Hour,   // Default mute duration: 24 hours
 		CheckCooldown:       30 * time.Minute, // Don't check the same user more often than this
 		DeleteMessages:      true,             // Default to deleting messages
+		AuditGroupID:        0,                // Default to 0 (disabled)
 		RecentlyChecked:     make(map[int64]RecentlyCheckedUser),
 		AdminInfo:           make(map[int64][]AdminInfo),
 		AdminCacheTime:      make(map[int64]time.Time),
@@ -570,6 +572,14 @@ func main() {
 		} else if deleteStr == "false" || deleteStr == "0" || deleteStr == "no" {
 			settings.DeleteMessages = false
 			log.Printf("Message deletion is disabled")
+		}
+	}
+
+	// Set audit group ID from env or use default
+	if auditGroupStr := os.Getenv("AUDIT_GROUP_ID"); auditGroupStr != "" {
+		if auditGroupID, err := strconv.ParseInt(auditGroupStr, 10, 64); err == nil && auditGroupID != 0 {
+			settings.AuditGroupID = auditGroupID
+			log.Printf("Using audit group ID: %d", settings.AuditGroupID)
 		}
 	}
 
@@ -691,7 +701,7 @@ func main() {
 				log.Printf("DEBUG: Checking new user %s (ID: %d) for similarity", displayName, newUser.ID)
 
 				// Check username and auto-mute if necessary
-				checkAndMuteUser(bot, &settings, update.Message.Chat.ID, newUser.ID, newUser.UserName, newUser.FirstName, true, "", 0)
+				checkAndMuteUser(bot, &settings, update.Message.Chat.ID, newUser.ID, newUser.UserName, newUser.FirstName, true, "", 0, update.Message.Chat.Title)
 			}
 		}
 
@@ -732,7 +742,7 @@ func main() {
 							if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
 								log.Printf("DEBUG: STARTING similarity check for user ID %d", update.Message.From.ID)
 								checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
-									update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID)
+									update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
 								log.Printf("DEBUG: COMPLETED similarity check for user ID %d", update.Message.From.ID)
 							}
 						}
@@ -741,7 +751,7 @@ func main() {
 						// Check private chat messages too
 						if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
 							checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
-								update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID)
+								update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
 						}
 					}
 				} else {
@@ -1363,7 +1373,7 @@ func main() {
 
 // checkAndMuteUser checks a username for similarity and mutes the user if necessary
 // isNewUser indicates if this is a user who just joined (triggers different notification message)
-func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64, userID int64, username string, firstName string, isNewUser bool, messageText string, replyToMessageID int) {
+func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64, userID int64, username string, firstName string, isNewUser bool, messageText string, replyToMessageID int, chatTitle string) {
 	var similarUsernames []SimilarUsernameResult
 	var similarFirstNames []SimilarUsernameResult
 	var similarToAdmins []SimilarUsernameResult
@@ -1702,6 +1712,77 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 				if isAdmin {
 					CheckBotPermissions(bot, chatID)
 				}
+			}
+		}
+
+		// If audit group is configured, send a copy there too
+		if settings.AuditGroupID != 0 {
+			// Create a concise audit message with only similarity information
+			var auditText strings.Builder
+			fmt.Fprintf(&auditText, "🔍 Audit from chat %s (ID: %d):\n\n", chatTitle, chatID)
+
+			// Add user identifier
+			if username != "" {
+				fmt.Fprintf(&auditText, "Scammer: @%s (ID: %d)\n", username, userID)
+			} else if firstName != "" {
+				fmt.Fprintf(&auditText, "Scammer: %s (ID: %d)\n", firstName, userID)
+			} else {
+				fmt.Fprintf(&auditText, "User ID: %d\n", userID)
+			}
+
+			// Add username similarities
+			if len(similarUsernames) > 0 {
+				auditText.WriteString("\nSimilar to official accounts:\n")
+				for _, result := range similarUsernames {
+					fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
+						result.Username, result.Similarity*100)
+				}
+			}
+
+			// Add admin similarities
+			if len(similarToAdmins) > 0 {
+				auditText.WriteString("\nSimilar to group admins:\n")
+				for _, result := range similarToAdmins {
+					// Find the admin info to get their user ID
+					var adminUserID int64
+					for _, admin := range adminInfo {
+						if strings.TrimPrefix(result.Username, "@") == admin.Username || result.Username == admin.FirstName {
+							adminUserID = admin.UserID
+							break
+						}
+					}
+
+					if adminUserID > 0 {
+						fmt.Fprintf(&auditText, "- %s (ID: %d) (%.2f%% similarity)\n",
+							strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
+					} else {
+						fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
+							strings.TrimPrefix(result.Username, "@"), result.Similarity*100)
+					}
+				}
+			}
+
+			// Add first name similarities
+			if len(similarFirstNames) > 0 {
+				auditText.WriteString("\nSimilar first name to:\n")
+				for _, result := range similarFirstNames {
+					fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
+						result.Username, result.Similarity*100)
+				}
+			}
+
+			// Add action taken
+			if autoMuteTriggered {
+				auditText.WriteString(fmt.Sprintf("\nAction: Auto-muted for %.1f hours\n", settings.MuteDuration.Hours()))
+			}
+			if settings.DeleteMessages && !isNewUser && replyToMessageID > 0 {
+				auditText.WriteString("Action: Message deleted\n")
+			}
+
+			auditMsg := tgbotapi.NewMessage(settings.AuditGroupID, auditText.String())
+			_, err = bot.Send(auditMsg)
+			if err != nil {
+				log.Printf("ERROR: Failed to send audit notification: %v", err)
 			}
 		}
 	}
