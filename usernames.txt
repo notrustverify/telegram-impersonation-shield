@@ -26,7 +26,6 @@ support
 
 #Community Mods
 cgi_bin
-cgi-bin
 diomark0
 babyxdd
 
