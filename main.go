@@ -1495,17 +1495,17 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		if len(similarUsernames) > 0 {
 			log.Printf("DEBUG: Found %d similar usernames for @%s", len(similarUsernames), username)
-			for i, result := range similarUsernames {
-				log.Printf("DEBUG: Similar username #%d: %s (%.2f%% similarity)",
-					i+1, result.Username, result.Similarity*100)
+			for _, result := range similarUsernames {
+				log.Printf("DEBUG: Similar username: %s (%.2f%% similarity)",
+					result.Username, result.Similarity*100)
 			}
 		}
 
 		if len(similarToAdmins) > 0 {
 			log.Printf("DEBUG: Found %d admin identifiers similar to @%s", len(similarToAdmins), username)
-			for i, result := range similarToAdmins {
-				log.Printf("DEBUG: Similar admin identifier #%d: %s (%.2f%% similarity)",
-					i+1, result.Username, result.Similarity*100)
+			for _, result := range similarToAdmins {
+				log.Printf("DEBUG: Similar admin identifier: %s (%.2f%% similarity)",
+					result.Username, result.Similarity*100)
 			}
 		}
 
