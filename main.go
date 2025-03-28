@@ -1165,6 +1165,24 @@ func main() {
 					settings.Exceptions.mutex.RUnlock()
 					debugText += "\n"
 
+					// Send debug message
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, debugText)
+					bot.Send(msg)
+
+				case "list":
+					// Show all protected usernames
+					var listText strings.Builder
+					listText.WriteString("📋 Protected Usernames:\n\n")
+
+					for i, username := range KnownUsernames {
+						fmt.Fprintf(&listText, "%d. %s\n", i+1, username)
+					}
+
+					listText.WriteString(fmt.Sprintf("\nTotal: %d usernames", len(KnownUsernames)))
+
+					msg := tgbotapi.NewMessage(update.Message.Chat.ID, listText.String())
+					bot.Send(msg)
+
 				case "cooldown":
 					// Parse cooldown value
 					args := update.Message.CommandArguments()
