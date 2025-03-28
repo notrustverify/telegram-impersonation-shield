@@ -856,9 +856,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /addexception but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -912,9 +910,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /removeexception but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -964,9 +960,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /listexceptions but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -992,9 +986,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /addauthmanager but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exception managers. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -1040,9 +1032,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /removeauthmanager but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exception managers. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -1084,9 +1074,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /listauthmanagers but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to view exception managers. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
@@ -1112,9 +1100,7 @@ func main() {
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /deletemessages but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to change settings. Your user ID must be in the exception_managers.txt file.")
-						bot.Send(msg)
+
 						continue
 					}
 
