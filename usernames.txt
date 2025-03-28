@@ -24,7 +24,7 @@ alephium_support
 aleph_official
 support
 alephiumsupport
-customersupport
+customer support
 
 #Community Mods
 cgi_bin

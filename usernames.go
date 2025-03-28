@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"strings"
 )
@@ -19,9 +20,23 @@ func LoadUsernamesFromFile(filePath string) ([]string, error) {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		username := strings.TrimSpace(scanner.Text())
-		if username != "" && !strings.HasPrefix(username, "#") {
-			usernames = append(usernames, username)
+		// Skip empty lines and comments
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Remove @ symbol if present
+		line = strings.TrimPrefix(line, "@")
+
+		// Normalize the username by removing spaces and converting to lowercase
+		normalized := normalizeName(line)
+
+		// Only add if it's a valid username
+		if isValidUsername(normalized) {
+			usernames = append(usernames, normalized)
+		} else {
+			log.Printf("WARNING: Invalid username in file: %s", line)
 		}
 	}
 

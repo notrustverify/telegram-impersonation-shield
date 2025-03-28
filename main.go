@@ -262,6 +262,7 @@ type RecentlyCheckedUser struct {
 type AdminInfo struct {
 	Username  string
 	FirstName string
+	LastName  string
 	UserID    int64
 }
 
@@ -707,7 +708,7 @@ func main() {
 				log.Printf("DEBUG: Checking new user %s (ID: %d) for similarity", displayName, newUser.ID)
 
 				// Check username and auto-mute if necessary
-				checkAndMuteUser(bot, &settings, update.Message.Chat.ID, newUser.ID, newUser.UserName, newUser.FirstName, true, "", 0, update.Message.Chat.Title)
+				checkAndMuteUser(bot, &settings, update.Message.Chat.ID, newUser.ID, newUser.UserName, newUser.FirstName, newUser.LastName, true, "", 0, update.Message.Chat.Title)
 			}
 		}
 
@@ -748,7 +749,7 @@ func main() {
 							if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
 								log.Printf("DEBUG: STARTING similarity check for user ID %d", update.Message.From.ID)
 								checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
-									update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
+									update.Message.From.UserName, update.Message.From.FirstName, update.Message.From.LastName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
 								log.Printf("DEBUG: COMPLETED similarity check for user ID %d", update.Message.From.ID)
 							}
 						}
@@ -757,7 +758,7 @@ func main() {
 						// Check private chat messages too
 						if update.Message.From.UserName != "" || update.Message.From.FirstName != "" {
 							checkAndMuteUser(bot, &settings, update.Message.Chat.ID, update.Message.From.ID,
-								update.Message.From.UserName, update.Message.From.FirstName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
+								update.Message.From.UserName, update.Message.From.FirstName, update.Message.From.LastName, false, update.Message.Text, update.Message.MessageID, update.Message.Chat.Title)
 						}
 					}
 				} else {
@@ -1039,7 +1040,7 @@ func main() {
 
 					// Parse input arguments
 					parts := strings.Fields(args)
-					var username, firstName string
+					var username, firstName, lastName string
 
 					// First argument is either username or firstname
 					firstArg := strings.TrimPrefix(parts[0], "@")
@@ -1054,8 +1055,15 @@ func main() {
 
 					// If there are more arguments and we identified first one as username,
 					// treat the rest as a first name
-					if len(parts) > 1 && username != "" {
-						firstName = strings.Join(parts[1:], " ")
+					if len(parts) > 1 {
+						if username != "" {
+							firstName = strings.Join(parts[1:], " ")
+						} else {
+							firstName = parts[1]
+							if len(parts) > 2 {
+								lastName = strings.Join(parts[2:], " ")
+							}
+						}
 					}
 
 					// Build response message
@@ -1081,17 +1089,26 @@ func main() {
 						}
 					}
 
-					// Check first name only if no username was provided or specifically requested
-					if firstName != "" && (username == "" || len(parts) > 1) {
-						similarFirstNames = FindSimilarUsernamesWithExceptions(firstName, settings.SimilarityThreshold, nil)
+					// Check full name if provided
+					var fullName string
+					if firstName != "" && lastName != "" {
+						fullName = firstName + " " + lastName
+					} else if firstName != "" {
+						fullName = firstName
+					} else if lastName != "" {
+						fullName = lastName
+					}
+
+					if fullName != "" {
+						similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, nil)
 						if len(similarFirstNames) > 0 {
 							totalResults += len(similarFirstNames)
 							if username != "" {
 								fmt.Fprintf(&responseText, "\nAdditionally, found %d similar name(s) for '%s':\n\n",
-									len(similarFirstNames), firstName)
+									len(similarFirstNames), fullName)
 							} else {
 								fmt.Fprintf(&responseText, "Found %d similar name(s) for '%s':\n\n",
-									len(similarFirstNames), firstName)
+									len(similarFirstNames), fullName)
 							}
 
 							for i, result := range similarFirstNames {
@@ -1099,9 +1116,9 @@ func main() {
 									i+1, result.Username, result.Similarity*100)
 							}
 						} else if username != "" {
-							fmt.Fprintf(&responseText, "\nNo similar names found for '%s'\n", firstName)
+							fmt.Fprintf(&responseText, "\nNo similar names found for '%s'\n", fullName)
 						} else {
-							fmt.Fprintf(&responseText, "No similar names found for '%s'\n", firstName)
+							fmt.Fprintf(&responseText, "No similar names found for '%s'\n", fullName)
 						}
 					}
 
@@ -1397,7 +1414,7 @@ func main() {
 
 // checkAndMuteUser checks a username for similarity and mutes the user if necessary
 // isNewUser indicates if this is a user who just joined (triggers different notification message)
-func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64, userID int64, username string, firstName string, isNewUser bool, messageText string, replyToMessageID int, chatTitle string) {
+func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64, userID int64, username string, firstName string, lastName string, isNewUser bool, messageText string, replyToMessageID int, chatTitle string) {
 	var similarUsernames []SimilarUsernameResult
 	var similarFirstNames []SimilarUsernameResult
 	var similarToAdmins []SimilarUsernameResult
@@ -1409,9 +1426,20 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		return
 	}
 
-	// Convert username and firstName to lowercase
+	// Convert username and names to lowercase
 	username = strings.ToLower(username)
 	firstName = strings.ToLower(firstName)
+	lastName = strings.ToLower(lastName)
+
+	// Build full name from first and last name if available
+	var fullName string
+	if firstName != "" && lastName != "" {
+		fullName = firstName + " " + lastName
+	} else if firstName != "" {
+		fullName = firstName
+	} else if lastName != "" {
+		fullName = lastName
+	}
 
 	// Get admin list for additional checking
 	adminInfo := settings.GetAdminInfo(bot, chatID)
@@ -1445,13 +1473,19 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := normalizeName(admin.FirstName)
-				firstNameLower := normalizeName(firstName)
-				similarity := JaroWinkler(firstNameLower, adminFirstNameLower)
-				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
+				adminFirstNameLower := strings.ToLower(admin.FirstName)
+				adminLastNameLower := strings.ToLower(admin.LastName)
+				adminFullName := adminFirstNameLower
+				if adminLastNameLower != "" {
+					adminFullName += " " + adminLastNameLower
+				}
+
+				// Check full name similarity
+				fullNameSimilarity := JaroWinkler(fullName, adminFullName)
+				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
-						Username:   admin.FirstName, // First name, no @ symbol
-						Similarity: similarity,
+						Username:   admin.FirstName + " " + admin.LastName + " (full name)", // First name, no @ symbol
+						Similarity: fullNameSimilarity,
 					})
 				}
 			}
@@ -1480,11 +1514,12 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		}
 	}
 
-	// Only check first name if username is not available or had no matches
-	if !hasSimilarities && firstName != "" {
-		log.Printf("DEBUG: Checking first name '%s' as fallback", firstName)
+	// Only check full name if username is not available or had no matches
+	if !hasSimilarities && fullName != "" {
+		log.Printf("DEBUG: Checking full name '%s' as fallback", fullName)
 
-		similarFirstNames = FindSimilarUsernamesWithExceptions(firstName, settings.SimilarityThreshold, nil)
+		// Check full name
+		similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, nil)
 
 		// Also check similarity against admin usernames and first names
 		for _, admin := range adminInfo {
@@ -1496,24 +1531,29 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			// Check against admin username if available
 			if admin.Username != "" {
 				adminUsernameLower := strings.ToLower(admin.Username)
-				similarity := JaroWinkler(firstName, adminUsernameLower)
-				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
+				fullNameSimilarity := JaroWinkler(fullName, adminUsernameLower)
+				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
-						Username:   "@" + admin.Username, // Keep original case for display
-						Similarity: similarity,
+						Username:   "@" + admin.Username + " (full name)",
+						Similarity: fullNameSimilarity,
 					})
 				}
 			}
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := normalizeName(admin.FirstName)
-				firstNameLower := normalizeName(firstName)
-				similarity := JaroWinkler(firstNameLower, adminFirstNameLower)
-				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
+				adminFirstNameLower := strings.ToLower(admin.FirstName)
+				adminLastNameLower := strings.ToLower(admin.LastName)
+				adminFullName := adminFirstNameLower
+				if adminLastNameLower != "" {
+					adminFullName += " " + adminLastNameLower
+				}
+
+				fullNameSimilarity := JaroWinkler(fullName, adminFullName)
+				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
-						Username:   admin.FirstName, // First name, no @ symbol
-						Similarity: similarity,
+						Username:   admin.FirstName + " " + admin.LastName + " (full name)",
+						Similarity: fullNameSimilarity,
 					})
 				}
 			}
@@ -1522,7 +1562,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		hasSimilarities = len(similarFirstNames) > 0 || len(similarToAdmins) > 0
 
 		if len(similarFirstNames) > 0 {
-			log.Printf("DEBUG: Found %d similar names for first name '%s'", len(similarFirstNames), firstName)
+			log.Printf("DEBUG: Found %d similar names for full name '%s'", len(similarFirstNames), fullName)
 			for i, result := range similarFirstNames {
 				log.Printf("DEBUG: Similar name #%d: %s (%.2f%% similarity)",
 					i+1, result.Username, result.Similarity*100)
@@ -1530,7 +1570,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		}
 
 		if !hasSimilarities {
-			log.Printf("DEBUG: No similar names found for first name '%s'", firstName)
+			log.Printf("DEBUG: No similar names found for full name '%s'", fullName)
 		}
 	}
 
@@ -1555,8 +1595,8 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		// Determine how to identify the user in the message
 		if username != "" {
 			userIdentifier = fmt.Sprintf("@%s (ID: %d)", username, userID)
-		} else if firstName != "" {
-			userIdentifier = fmt.Sprintf("%s (ID: %d)", firstName, userID)
+		} else if fullName != "" {
+			userIdentifier = fmt.Sprintf("%s (ID: %d)", fullName, userID)
 		} else {
 			userIdentifier = fmt.Sprintf("User ID %d", userID)
 		}
@@ -1750,8 +1790,8 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			// Add user identifier
 			if username != "" {
 				fmt.Fprintf(&auditText, "Scammer: @%s (ID: %d)\n", username, userID)
-			} else if firstName != "" {
-				fmt.Fprintf(&auditText, "Scammer: %s (ID: %d)\n", firstName, userID)
+			} else if fullName != "" {
+				fmt.Fprintf(&auditText, "Scammer: %s (ID: %d)\n", fullName, userID)
 			} else {
 				fmt.Fprintf(&auditText, "User ID: %d\n", userID)
 			}
@@ -1856,14 +1896,15 @@ func (s *BotSettings) UpdateAdminCache(bot *tgbotapi.BotAPI, chatID int64) []Adm
 		info := AdminInfo{
 			Username:  admin.User.UserName,
 			FirstName: admin.User.FirstName,
+			LastName:  admin.User.LastName,
 			UserID:    admin.User.ID,
 		}
 
 		// Only add if we have at least one piece of identifying information
-		if info.Username != "" || info.FirstName != "" {
+		if info.Username != "" || info.FirstName != "" || info.LastName != "" {
 			adminInfo = append(adminInfo, info)
-			log.Printf("DEBUG: Added admin info - UserID: %d, Username: @%s, FirstName: %s",
-				info.UserID, info.Username, info.FirstName)
+			log.Printf("DEBUG: Added admin info - UserID: %d, Username: @%s, FirstName: %s, LastName: %s",
+				info.UserID, info.Username, info.FirstName, info.LastName)
 		}
 	}
 
