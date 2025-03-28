@@ -22,6 +22,7 @@ alephiumorg
 alphium
 alephium_support
 aleph_official
+support
 
 #Community Mods
 cgi_bin
