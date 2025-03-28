@@ -63,3 +63,4 @@ tmp/
 temp/ 
 docker-compose.yml
 exceptions.txt
+exception_managers.txt

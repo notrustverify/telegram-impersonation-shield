@@ -213,7 +213,9 @@ func FindSimilarUsernamesWithExceptions(username string, threshold float64, exce
 		// Convert known username to lowercase for comparison
 		knownUsernameLower := strings.ToLower(knownUsername)
 		similarity := JaroWinkler(usernameLower, knownUsernameLower)
+
 		if similarity >= threshold && similarity < 1.0 { // Exclude exact matches
+			// Add the result if it meets the similarity threshold
 			results = append(results, SimilarUsernameResult{
 				Username:   knownUsername, // Keep original case for display
 				Similarity: similarity,
@@ -792,7 +794,14 @@ func main() {
 					}
 
 				case "help":
-					helpText := "📋 **Commands**:\n" +
+					helpText := "📋 **Commands Available to All Users**:\n" +
+						"- `/start` - Get basic information about the bot\n" +
+						"- `/help` - Show this help message\n\n" +
+
+						"**🔑 Authorized User Commands** (only for users in the file):\n" +
+						"- `/addexception [user_id]` - Add user ID to exceptions list (ignored in checks)\n" +
+						"- `/removeexception [user_id]` - Remove user ID from exceptions list\n" +
+						"- `/listexceptions` - Show all user IDs in exceptions list\n" +
 						"- `/add [username]` - Add a username to the protected list\n" +
 						"- `/remove [username]` - Remove a username from the protected list\n" +
 						"- `/list` - Show all protected usernames\n" +
@@ -802,16 +811,14 @@ func main() {
 						"- `/threshold [value]` - Set similarity threshold (0.1-0.9, default: 0.75)\n" +
 						"- `/automute [on/off]` - Enable/disable automatic muting\n" +
 						"- `/cooldown [minutes]` - Set how often the same user is checked (0 = always)\n" +
-						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n\n" +
-						"**🔑 Authorized User Commands** (only for users in the file):\n" +
-						"- `/addexception [user_id]` - Add user ID to exceptions list (ignored in checks)\n" +
-						"- `/removeexception [user_id]` - Remove user ID from exceptions list\n" +
-						"- `/listexceptions` - Show all user IDs in exceptions list\n\n" +
-						"**👑 Admin-only Commands**:\n" +
-						"- `/addauthmanager [user_id]` - Add a user who can manage exceptions without being admin\n" +
-						"- `/removeauthmanager [user_id]` - Remove a user from exception managers\n" +
-						"- `/listauthmanagers` - List all users authorized to manage exceptions\n\n" +
-						"ℹ️ **Note**: Exception management commands can ONLY be used by authorized users listed in the file, not by regular admins.\n\n" +
+						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n" +
+						"- `/addauthmanager [user_id]` - Add a user who can manage exceptions and use admin commands\n" +
+						"- `/removeauthmanager [user_id]` - Remove a user from authorized managers\n" +
+						"- `/listauthmanagers` - List all authorized managers\n" +
+						"- `/mute [reply to message]` - Mute a user manually\n" +
+						"- `/debug` - Show debug information about the bot\n\n" +
+
+						"ℹ️ **Note**: All administration commands can ONLY be used by authorized users listed in the file, not by regular Telegram admins.\n\n" +
 						"ℹ️ **Getting User IDs**:\n" +
 						"To get a user's ID:\n" +
 						"1. Message @userinfobot\n" +
@@ -844,375 +851,13 @@ func main() {
 						log.Printf("DEBUG: Help message sent successfully (ID: %d)", sentMsg.MessageID)
 					}
 
-				case "threshold":
-					// Parse threshold value
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Current threshold is %.2f. Use /threshold [value] to change it.",
-								settings.SimilarityThreshold))
-						bot.Send(msg)
-						continue
-					}
-
-					var newThreshold float64
-					_, err := fmt.Sscanf(args, "%f", &newThreshold)
-					if err != nil || newThreshold < 0 || newThreshold > 1 {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid threshold value. Must be between 0 and 1.")
-						bot.Send(msg)
-						continue
-					}
-
-					settings.SimilarityThreshold = newThreshold
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Threshold set to %.2f", settings.SimilarityThreshold))
-					bot.Send(msg)
-
-				case "count":
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Currently tracking %d usernames for similarity detection.",
-							len(KnownUsernames)))
-					bot.Send(msg)
-
-				case "automute":
-					// Parse automute setting
-					args := update.Message.CommandArguments()
-					if args == "" {
-						status := "disabled"
-						if settings.AutoMuteEnabled {
-							status = "enabled"
-						}
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Auto-mute is currently %s. Use /automute on or /automute off to change.",
-								status))
-						bot.Send(msg)
-						continue
-					}
-
-					args = strings.ToLower(args)
-					if args == "on" || args == "enable" || args == "true" || args == "1" {
-						settings.AutoMuteEnabled = true
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Auto-mute enabled. Users with similarity >= %.2f will be automatically muted.",
-								settings.AutoMuteThreshold))
-						bot.Send(msg)
-					} else if args == "off" || args == "disable" || args == "false" || args == "0" {
-						settings.AutoMuteEnabled = false
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Auto-mute disabled.")
-						bot.Send(msg)
-					} else {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid value. Use 'on' or 'off' to enable or disable auto-mute.")
-						bot.Send(msg)
-					}
-
-				case "mutethreshold":
-					// Parse mute threshold value
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Current auto-mute threshold is %.2f. Use /mutethreshold [value] to change it.",
-								settings.AutoMuteThreshold))
-						bot.Send(msg)
-						continue
-					}
-
-					var newThreshold float64
-					_, err := fmt.Sscanf(args, "%f", &newThreshold)
-					if err != nil || newThreshold < 0 || newThreshold > 1 {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid threshold value. Must be between 0 and 1.")
-						bot.Send(msg)
-						continue
-					}
-
-					settings.AutoMuteThreshold = newThreshold
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Auto-mute threshold set to %.2f", settings.AutoMuteThreshold))
-					bot.Send(msg)
-
-				case "muteduration":
-					// Parse mute duration in hours
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Current mute duration is %.1f hours. Use /muteduration [hours] to change it.",
-								settings.MuteDuration.Hours()))
-						bot.Send(msg)
-						continue
-					}
-
-					var hours float64
-					_, err := fmt.Sscanf(args, "%f", &hours)
-					if err != nil || hours <= 0 {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid duration. Must be a positive number of hours.")
-						bot.Send(msg)
-						continue
-					}
-
-					settings.MuteDuration = time.Duration(hours * float64(time.Hour))
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Mute duration set to %.1f hours", hours))
-					bot.Send(msg)
-
-				case "mute":
-					// Check if the message is a reply to another message
-					if update.Message.ReplyToMessage == nil {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You must reply to a message from the user you want to mute.")
-						bot.Send(msg)
-						continue
-					}
-
-					// Get the user to mute
-					userToMute := update.Message.ReplyToMessage.From
-					if userToMute == nil {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Cannot identify the user to mute.")
-						bot.Send(msg)
-						continue
-					}
-
-					// Try to mute the user
-					err := MuteUser(bot, update.Message.Chat.ID, userToMute.ID, settings.MuteDuration)
-					if err != nil {
-						log.Printf("Failed to mute user %s: %v", userToMute.UserName, err)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Failed to mute user. Make sure the bot has the necessary permissions.")
-						bot.Send(msg)
-					} else {
-						muteHours := settings.MuteDuration.Hours()
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("User @%s has been muted for %.1f hours.",
-								userToMute.UserName, muteHours))
-						bot.Send(msg)
-					}
-
-				case "checkuser":
-					// Parse username to check
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Please specify a username or first name to check. Format: /checkuser username OR /checkuser firstname")
-						bot.Send(msg)
-						continue
-					}
-
-					// Parse input arguments
-					parts := strings.Fields(args)
-					var username, firstName, lastName string
-
-					// First argument is either username or firstname
-					firstArg := strings.TrimPrefix(parts[0], "@")
-
-					// Determine if this is likely a username or first name
-					if strings.HasPrefix(parts[0], "@") || isValidUsername(firstArg) {
-						username = firstArg
-					} else {
-						// If it doesn't look like a username, treat it as a first name
-						firstName = firstArg
-					}
-
-					// If there are more arguments and we identified first one as username,
-					// treat the rest as a first name
-					if len(parts) > 1 {
-						if username != "" {
-							firstName = strings.Join(parts[1:], " ")
-						} else {
-							firstName = parts[1]
-							if len(parts) > 2 {
-								lastName = strings.Join(parts[2:], " ")
-							}
-						}
-					}
-
-					// Build response message
-					var responseText strings.Builder
-					var similarUsernames, similarFirstNames []SimilarUsernameResult
-					var totalResults int
-
-					// Check username if provided
-					if username != "" {
-						// Check similarity
-						similarUsernames = FindSimilarUsernamesWithExceptions(username, settings.SimilarityThreshold, nil)
-						if len(similarUsernames) > 0 {
-							totalResults += len(similarUsernames)
-							fmt.Fprintf(&responseText, "Found %d similar username(s) for '@%s':\n\n",
-								len(similarUsernames), username)
-
-							for i, result := range similarUsernames {
-								fmt.Fprintf(&responseText, "%d. %s (%.2f%% similarity)\n",
-									i+1, result.Username, result.Similarity*100)
-							}
-						} else {
-							fmt.Fprintf(&responseText, "No similar usernames found for '@%s'\n", username)
-						}
-					}
-
-					// Check full name if provided
-					var fullName string
-					if firstName != "" && lastName != "" {
-						fullName = firstName + " " + lastName
-					} else if firstName != "" {
-						fullName = firstName
-					} else if lastName != "" {
-						fullName = lastName
-					}
-
-					if fullName != "" {
-						similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, nil)
-						if len(similarFirstNames) > 0 {
-							totalResults += len(similarFirstNames)
-							if username != "" {
-								fmt.Fprintf(&responseText, "\nAdditionally, found %d similar name(s) for '%s':\n\n",
-									len(similarFirstNames), fullName)
-							} else {
-								fmt.Fprintf(&responseText, "Found %d similar name(s) for '%s':\n\n",
-									len(similarFirstNames), fullName)
-							}
-
-							for i, result := range similarFirstNames {
-								fmt.Fprintf(&responseText, "%d. %s (%.2f%% similarity)\n",
-									i+1, result.Username, result.Similarity*100)
-							}
-						} else if username != "" {
-							fmt.Fprintf(&responseText, "\nNo similar names found for '%s'\n", fullName)
-						} else {
-							fmt.Fprintf(&responseText, "No similar names found for '%s'\n", fullName)
-						}
-					}
-
-					if totalResults > 0 {
-						fmt.Fprintf(&responseText, "\n⚠️ Be careful with similar usernames and names as they might be impersonators!")
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText.String())
-					bot.Send(msg)
-
-				case "removeall":
-					// Check if this is a group chat
-					if !update.Message.Chat.IsGroup() && !update.Message.Chat.IsSuperGroup() {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"This command only works in groups.")
-						bot.Send(msg)
-						continue
-					}
-
-					// Instead of attempting to scan and remove, explain the limitations
-					warningMsg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						"⚠️ Limitation: This bot can only detect users when they send messages or join the group.\n\n"+
-							"For better protection:\n"+
-							"1. Keep the bot as an admin in your group\n"+
-							"2. Enable auto-mute with `/automute on`\n"+
-							"3. Set an appropriate threshold with `/mutethreshold 0.9`\n\n"+
-							"The bot will automatically detect and mute suspicious users as they join or post messages.")
-					bot.Send(warningMsg)
-
-				case "debug":
-					// Generate debug info
-					debugText := "🔍 Bot Debug Information\n\n"
-
-					// Bot info
-					debugText += fmt.Sprintf("Bot Username: @%s\n", bot.Self.UserName)
-					debugText += fmt.Sprintf("Bot ID: %d\n\n", bot.Self.ID)
-
-					// Settings info
-					debugText += fmt.Sprintf("Similarity Threshold: %.2f\n", settings.SimilarityThreshold)
-					debugText += fmt.Sprintf("Auto-Mute: %t\n", settings.AutoMuteEnabled)
-					debugText += fmt.Sprintf("Auto-Mute Threshold: %.2f\n", settings.AutoMuteThreshold)
-					debugText += fmt.Sprintf("Mute Duration: %.1f hours\n", settings.MuteDuration.Hours())
-					debugText += fmt.Sprintf("Check Cooldown: %.1f minutes\n\n", settings.CheckCooldown.Minutes())
-
-					// Resource info
-					debugText += fmt.Sprintf("Known Usernames: %d\n", len(KnownUsernames))
-
-					// Exceptions info
-					settings.Exceptions.mutex.RLock()
-					debugText += fmt.Sprintf("Exceptions: %d\n", len(settings.Exceptions.Exceptions))
-					// Show up to 5 exceptions as examples
-					if len(settings.Exceptions.Exceptions) > 0 {
-						debugText += "Example exceptions: "
-						count := 0
-						for userID := range settings.Exceptions.Exceptions {
-							if count > 0 {
-								debugText += ", "
-							}
-							debugText += fmt.Sprintf("%d", userID)
-							count++
-							if count >= 5 {
-								break
-							}
-						}
-						debugText += "\n"
-					}
-					settings.Exceptions.mutex.RUnlock()
-					debugText += "\n"
-
-					// Send debug message
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, debugText)
-					bot.Send(msg)
-
-				case "list":
-					// Show all protected usernames
-					var listText strings.Builder
-					listText.WriteString("📋 Protected Usernames:\n\n")
-
-					for i, username := range KnownUsernames {
-						fmt.Fprintf(&listText, "%d. %s\n", i+1, username)
-					}
-
-					listText.WriteString(fmt.Sprintf("\nTotal: %d usernames", len(KnownUsernames)))
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, listText.String())
-					bot.Send(msg)
-
-				case "cooldown":
-					// Parse cooldown value
-					args := update.Message.CommandArguments()
-					if args == "" {
-						if settings.CheckCooldown <= 0 {
-							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-								"Cooldown system is currently disabled. All messages will be checked. Use /cooldown [minutes] to set a cooldown.")
-							bot.Send(msg)
-						} else {
-							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-								fmt.Sprintf("Current cooldown between checks is %.1f minutes. Use /cooldown [minutes] to change it, or /cooldown 0 to disable.",
-									settings.CheckCooldown.Minutes()))
-							bot.Send(msg)
-						}
-						continue
-					}
-
-					var minutes float64
-					_, err := fmt.Sscanf(args, "%f", &minutes)
-					if err != nil || minutes < 0 {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid duration. Must be a non-negative number of minutes (0 to disable cooldown).")
-						bot.Send(msg)
-						continue
-					}
-
-					settings.CheckCooldown = time.Duration(minutes * float64(time.Minute))
-
-					var responseMsg string
-					if minutes == 0 {
-						responseMsg = "Cooldown system disabled. All messages will be checked."
-					} else {
-						responseMsg = fmt.Sprintf("Cooldown set to %.1f minutes", minutes)
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseMsg)
-					bot.Send(msg)
-
 				case "addexception":
-					// Check if user is authorized to manage exceptions
+					// Only allow authorized managers to add exceptions
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /addexception but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
 						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"You are not authorized to manage exceptions. Your user ID must be in the file.")
+							"You are not authorized to manage exceptions. Your user ID must be in the exception_managers.txt file.")
 						bot.Send(msg)
 						continue
 					}
@@ -1263,7 +908,7 @@ func main() {
 					bot.Send(msg)
 
 				case "removeexception":
-					// Check if user is authorized to manage exceptions
+					// Only allow authorized managers to remove exceptions
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /removeexception but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
@@ -1315,7 +960,7 @@ func main() {
 					bot.Send(msg)
 
 				case "listexceptions":
-					// Check if user is authorized to manage exceptions
+					// Only allow authorized managers to list exceptions
 					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
 						log.Printf("DEBUG: User %d (@%s) tried to use /listexceptions but is not authorized",
 							update.Message.From.ID, update.Message.From.UserName)
@@ -1343,10 +988,13 @@ func main() {
 					bot.Send(msg)
 
 				case "addauthmanager":
-					// Only allow admins to add authorized exception managers
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Only allow authorized managers to add other authorized managers
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /addauthmanager but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to manage exception managers. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1388,10 +1036,13 @@ func main() {
 					bot.Send(msg)
 
 				case "removeauthmanager":
-					// Only allow admins to remove authorized exception managers
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Only allow authorized managers to remove other authorized managers
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /removeauthmanager but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to manage exception managers. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1429,10 +1080,13 @@ func main() {
 					bot.Send(msg)
 
 				case "listauthmanagers":
-					// Only allow admins to list authorized exception managers
-					if !isAdmin {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in chat %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
+					// Only allow authorized managers to list other authorized managers
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /listauthmanagers but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to view exception managers. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
 						continue
 					}
 
@@ -1447,13 +1101,23 @@ func main() {
 						for i, userID := range managers {
 							responseText += fmt.Sprintf("%d. User ID: %d\n", i+1, userID)
 						}
-						responseText += "\nThese users can manage exceptions without being admins."
+						responseText += "\nThese users can manage exceptions."
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
 					bot.Send(msg)
 
 				case "deletemessages":
+					// Only allow authorized managers to change message deletion settings
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /deletemessages but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"You are not authorized to change settings. Your user ID must be in the exception_managers.txt file.")
+						bot.Send(msg)
+						continue
+					}
+
 					// Parse delete messages setting
 					args := update.Message.CommandArguments()
 					if args == "" {
@@ -1532,7 +1196,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			username, len(KnownUsernames), settings.SimilarityThreshold)
 
 		// Check for similar usernames
-		similarUsernames = FindSimilarUsernamesWithExceptions(username, settings.SimilarityThreshold, nil)
+		similarUsernames = FindSimilarUsernamesWithExceptions(username, settings.SimilarityThreshold, settings.Exceptions)
 
 		// Also check similarity against admin usernames and first names
 		for _, admin := range adminInfo {
@@ -1601,7 +1265,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		log.Printf("DEBUG: Checking full name '%s' as fallback", fullName)
 
 		// Check full name
-		similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, nil)
+		similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, settings.Exceptions)
 
 		// Also check similarity against admin usernames and first names
 		for _, admin := range adminInfo {
