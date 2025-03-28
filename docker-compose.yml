@@ -19,6 +19,7 @@ services:
     volumes:
       # Mount usernames.txt for easy updates
       - ./usernames.txt:/app/usernames.txt
+      - ./exceptions.txt:/app/exceptions.txt
       # Optionally mount a .env file if preferred over environment variables
       - ./.env:/app/.env:ro
     # Uncomment to use specific user ID to run the container
