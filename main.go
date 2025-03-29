@@ -902,7 +902,8 @@ func main() {
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Added user ID %d to exceptions list. This user will now be ignored in similarity checks.", userID))
+						fmt.Sprintf("Added user ID `%d` to exceptions list. This user will now be ignored in similarity checks.", userID))
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "removeexception":
@@ -952,7 +953,8 @@ func main() {
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Removed user ID %d from exceptions list. This user will now be checked in similarity checks.", userID))
+						fmt.Sprintf("Removed user ID `%d` from exceptions list. This user will now be checked in similarity checks.", userID))
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "listexceptions":
@@ -973,12 +975,13 @@ func main() {
 					} else {
 						responseText = fmt.Sprintf("📋 Exceptions list (%d users):\n\n", len(exceptions))
 						for i, userID := range exceptions {
-							responseText += fmt.Sprintf("%d. User ID: %d\n", i+1, userID)
+							responseText += fmt.Sprintf("%d. User ID: `%d`\n", i+1, userID)
 						}
 						responseText += "\nThese users are ignored in similarity checks."
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "addauthmanager":
@@ -1024,7 +1027,8 @@ func main() {
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Added user ID %d to authorized exception managers. This user can now manage exceptions.", userID))
+						fmt.Sprintf("Added user ID `%d` to authorized exception managers. This user can now manage exceptions.", userID))
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "removeauthmanager":
@@ -1066,7 +1070,8 @@ func main() {
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Removed user ID %d from authorized exception managers. This user can no longer manage exceptions.", userID))
+						fmt.Sprintf("Removed user ID `%d` from authorized exception managers. This user can no longer manage exceptions.", userID))
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "listauthmanagers":
@@ -1087,12 +1092,13 @@ func main() {
 					} else {
 						responseText = fmt.Sprintf("📋 Authorized Exception Managers (%d users):\n\n", len(managers))
 						for i, userID := range managers {
-							responseText += fmt.Sprintf("%d. User ID: %d\n", i+1, userID)
+							responseText += fmt.Sprintf("%d. User ID: `%d`\n", i+1, userID)
 						}
 						responseText += "\nThese users can manage exceptions."
 					}
 
 					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
+					msg.ParseMode = "Markdown"
 					bot.Send(msg)
 
 				case "deletemessages":
@@ -1376,11 +1382,11 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		// Determine how to identify the user in the message
 		if username != "" {
-			userIdentifier = fmt.Sprintf("@%s (ID: %d)", username, userID)
+			userIdentifier = fmt.Sprintf("@%s (ID: `%d`)", username, userID)
 		} else if fullName != "" {
-			userIdentifier = fmt.Sprintf("%s (ID: %d)", fullName, userID)
+			userIdentifier = fmt.Sprintf("%s (ID: `%d`)", fullName, userID)
 		} else {
-			userIdentifier = fmt.Sprintf("User ID %d", userID)
+			userIdentifier = fmt.Sprintf("User ID `%d`", userID)
 		}
 
 		if isNewUser {
@@ -1417,7 +1423,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 				}
 
 				if adminUserID > 0 {
-					notificationText += fmt.Sprintf("%s (ID: %d) (%.2f%% similarity)\n",
+					notificationText += fmt.Sprintf("%s (ID: `%d`) (%.2f%% similarity)\n",
 						strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
 				} else {
 					notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
@@ -1542,6 +1548,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		// Create message config
 		msg := tgbotapi.NewMessage(chatID, notificationText)
+		msg.ParseMode = "Markdown"
 
 		// Send notification to the chat
 		_, err := bot.Send(msg)
@@ -1571,11 +1578,11 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Add user identifier
 			if username != "" {
-				fmt.Fprintf(&auditText, "Scammer: @%s (ID: %d)\n", username, userID)
+				fmt.Fprintf(&auditText, "Scammer: @%s (ID: `%d`)\n", username, userID)
 			} else if fullName != "" {
-				fmt.Fprintf(&auditText, "Scammer: %s (ID: %d)\n", fullName, userID)
+				fmt.Fprintf(&auditText, "Scammer: %s (ID: `%d`)\n", fullName, userID)
 			} else {
-				fmt.Fprintf(&auditText, "User ID: %d\n", userID)
+				fmt.Fprintf(&auditText, "User ID: `%d`\n", userID)
 			}
 
 			// Add username similarities
@@ -1601,7 +1608,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 					}
 
 					if adminUserID > 0 {
-						fmt.Fprintf(&auditText, "- %s (ID: %d) (%.2f%% similarity)\n",
+						fmt.Fprintf(&auditText, "- %s (ID: `%d`) (%.2f%% similarity)\n",
 							strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
 					} else {
 						fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
@@ -1628,6 +1635,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			}
 
 			auditMsg := tgbotapi.NewMessage(settings.AuditGroupID, auditText.String())
+			auditMsg.ParseMode = "Markdown"
 			_, err = bot.Send(auditMsg)
 			if err != nil {
 				log.Printf("ERROR: Failed to send audit notification: %v", err)
