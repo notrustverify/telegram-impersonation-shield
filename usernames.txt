@@ -27,6 +27,7 @@ alephiumsupport
 customer support
 safeguard
 admin
+alephium dev
 
 #Community Mods
 cgi_bin
