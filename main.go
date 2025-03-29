@@ -1135,6 +1135,56 @@ func main() {
 						bot.Send(msg)
 					}
 
+				case "automute":
+					// Only allow authorized managers to change auto-mute settings
+					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+						log.Printf("DEBUG: User %d (@%s) tried to use /automute but is not authorized",
+							update.Message.From.ID, update.Message.From.UserName)
+
+						continue
+					}
+
+					// Parse auto-mute setting
+					args := update.Message.CommandArguments()
+					if args == "" {
+						status := "disabled"
+						if settings.AutoMuteEnabled {
+							status = "enabled"
+						}
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Auto-mute is currently %s. Use /automute on or /automute off to change.\n\nCurrent auto-mute threshold: %.2f",
+								status, settings.AutoMuteThreshold))
+						bot.Send(msg)
+						continue
+					}
+
+					args = strings.ToLower(args)
+					if args == "on" || args == "enable" || args == "true" || args == "1" {
+						settings.AutoMuteEnabled = true
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							fmt.Sprintf("Auto-mute enabled. Users with username similarity above %.2f will be automatically muted.",
+								settings.AutoMuteThreshold))
+						bot.Send(msg)
+					} else if args == "off" || args == "disable" || args == "false" || args == "0" {
+						settings.AutoMuteEnabled = false
+						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+							"Auto-mute disabled. Users with similar usernames will not be automatically muted.")
+						bot.Send(msg)
+					} else {
+						// Check if this is a threshold setting
+						threshold, err := strconv.ParseFloat(args, 64)
+						if err == nil && threshold >= 0 && threshold <= 1 {
+							settings.AutoMuteThreshold = threshold
+							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+								fmt.Sprintf("Auto-mute threshold set to %.2f", threshold))
+							bot.Send(msg)
+						} else {
+							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+								"Invalid value. Use 'on' or 'off' to enable or disable auto-mute, or a value between 0 and 1 to set the threshold.")
+							bot.Send(msg)
+						}
+					}
+
 				}
 			} else {
 				// Instead, just log that we received a text message but ignoring it
