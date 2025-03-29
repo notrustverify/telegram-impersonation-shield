@@ -25,6 +25,8 @@ aleph_official
 support
 alephiumsupport
 customer support
+safeguard
+admin
 
 #Community Mods
 cgi_bin
