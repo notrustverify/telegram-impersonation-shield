@@ -1,0 +1,2 @@
+# List of user IDs to ignore in similarity checks
+
