@@ -28,15 +28,21 @@ customer support
 
 #Community Mods
 cgi_bin
+cgibin
 diomark0
 babyxdd
 
 #Core Contributors
 MaudBannwart
 polto
+polt0
 vladm9
+v1adm9
 ratko42
 wachmc
 mikae
 nop_33
+n0p33
 h0ngcha0
+hOngchaO
+hongcha0
