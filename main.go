@@ -14,9 +14,6 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Record start time for uptime tracking
-var startTime = time.Now()
-
 // loadEnvFile loads environment variables from a .env file if it exists
 func loadEnvFile(filePath string) {
 	// Check if .env file exists
@@ -76,8 +73,8 @@ func normalizeName(name string) string {
 // Returns a value between 0 (completely different) and 1 (identical)
 func JaroWinkler(s1, s2 string) float64 {
 	// Convert to lowercase for case-insensitive comparison
-	s1 = strings.ToLower(s1)
-	s2 = strings.ToLower(s2)
+	s1 = normalizeName(s1)
+	s2 = normalizeName(s2)
 
 	// If strings are identical, return 1.0
 	if s1 == s2 {
@@ -180,46 +177,27 @@ type SimilarUsernameResult struct {
 	Similarity float64
 }
 
-// FindSimilarUsernames checks a username against known usernames and returns matches above the threshold
-func FindSimilarUsernames(username string, threshold float64) []SimilarUsernameResult {
-	var results []SimilarUsernameResult
-
-	// Convert input username to lowercase
-	usernameLower := strings.ToLower(username)
-
-	for _, knownUsername := range KnownUsernames {
-		// Convert known username to lowercase for comparison
-		knownUsernameLower := strings.ToLower(knownUsername)
-		similarity := JaroWinkler(usernameLower, knownUsernameLower)
-		if similarity >= threshold && similarity < 1.0 { // Exclude exact matches
-			results = append(results, SimilarUsernameResult{
-				Username:   knownUsername, // Keep original case for display
-				Similarity: similarity,
-			})
-		}
-	}
-
-	return results
-}
-
 // FindSimilarUsernamesWithExceptions checks a username but ignores exceptions
+// Returns early after finding the first match
 func FindSimilarUsernamesWithExceptions(username string, threshold float64, exceptions *ExceptionsManager) []SimilarUsernameResult {
 	var results []SimilarUsernameResult
 
 	// Convert input username to lowercase
-	usernameLower := strings.ToLower(username)
+	usernameLower := username
 
 	for _, knownUsername := range KnownUsernames {
 		// Convert known username to lowercase for comparison
-		knownUsernameLower := strings.ToLower(knownUsername)
+		knownUsernameLower := knownUsername
 		similarity := JaroWinkler(usernameLower, knownUsernameLower)
 
 		if similarity >= threshold && similarity < 1.0 { // Exclude exact matches
-			// Add the result if it meets the similarity threshold
-			results = append(results, SimilarUsernameResult{
-				Username:   knownUsername, // Keep original case for display
-				Similarity: similarity,
-			})
+			// Return immediately with this single result
+			return []SimilarUsernameResult{
+				{
+					Username:   knownUsername, // Keep original case for display
+					Similarity: similarity,
+				},
+			}
 		}
 	}
 
@@ -358,112 +336,6 @@ func BanUser(bot *tgbotapi.BotAPI, chatID int64, userID int64) error {
 
 	_, err := bot.Request(banConfig)
 	return err
-}
-
-// ScanGroupForSuspiciousUsernames reports users with suspicious usernames
-func ScanGroupForSuspiciousUsernames(bot *tgbotapi.BotAPI, settings *BotSettings, message *tgbotapi.Message) {
-	chatID := message.Chat.ID
-
-	// Send initial status message
-	statusMsg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🔍 Starting scan of usernames and first names in %s...", message.Chat.Title))
-	sentMsg, err := bot.Send(statusMsg)
-	if err != nil {
-		log.Printf("Failed to send initial status message: %v", err)
-		return
-	}
-
-	// Get admins from cache - more efficient than direct API calls
-	admins := settings.GetAdminInfo(bot, chatID)
-	if len(admins) == 0 {
-		log.Printf("Failed to get chat admins or no admins found")
-		editMsg := tgbotapi.NewEditMessageText(chatID, sentMsg.MessageID,
-			fmt.Sprintf("❌ Failed to scan group: Could not retrieve admin list"))
-		bot.Send(editMsg)
-		return
-	}
-
-	var suspiciousCount int
-	var suspiciousAdmins []string
-
-	// Check admin usernames and first names
-	for _, admin := range admins {
-		var foundSimilarities bool
-		var info strings.Builder
-		var userIdentifier string
-
-		// Skip if admin is in exceptions list
-		if settings.Exceptions.IsExcepted(admin.UserID) {
-			log.Printf("DEBUG: Admin user ID %d is in exceptions list, skipping similarity check", admin.UserID)
-			continue
-		}
-
-		// Check username first if available
-		if admin.Username != "" {
-			userIdentifier = "@" + admin.Username
-			similarUsernames := FindSimilarUsernames(admin.Username, settings.SimilarityThreshold)
-
-			if len(similarUsernames) > 0 {
-				foundSimilarities = true
-				suspiciousCount++
-
-				// Format the similar usernames
-				fmt.Fprintf(&info, "%s (ID: %d) has similar username to: ",
-					userIdentifier, admin.UserID)
-
-				var similarities []string
-				for _, similar := range similarUsernames {
-					similarities = append(similarities, fmt.Sprintf("%s (%.1f%%)",
-						similar.Username, similar.Similarity*100))
-				}
-
-				fmt.Fprintf(&info, "%s", strings.Join(similarities, ", "))
-			}
-		} else if admin.FirstName != "" {
-			// Only check first name if username is not available
-			userIdentifier = admin.FirstName
-			similarFirstNames := FindSimilarUsernames(admin.FirstName, settings.SimilarityThreshold)
-
-			if len(similarFirstNames) > 0 {
-				foundSimilarities = true
-				suspiciousCount++
-
-				fmt.Fprintf(&info, "%s (ID: %d) has similar first name to: ",
-					userIdentifier, admin.UserID)
-
-				var similarities []string
-				for _, similar := range similarFirstNames {
-					similarities = append(similarities, fmt.Sprintf("%s (%.1f%%)",
-						similar.Username, similar.Similarity*100))
-				}
-
-				fmt.Fprintf(&info, "%s", strings.Join(similarities, ", "))
-			}
-		}
-
-		if foundSimilarities {
-			suspiciousAdmins = append(suspiciousAdmins, info.String())
-		}
-	}
-
-	// Update the status message with results
-	resultText := fmt.Sprintf("✅ Admin scan complete!\n\nFound %d suspicious admin users\n\n", suspiciousCount)
-
-	if len(suspiciousAdmins) > 0 {
-		resultText += "📋 Suspicious Admin Users:\n\n"
-		for i, info := range suspiciousAdmins {
-			resultText += fmt.Sprintf("%d. %s\n\n", i+1, info)
-		}
-	} else {
-		resultText += "✅ No suspicious admin users found!\n\n"
-	}
-
-	resultText += "\n⚠️ Note: Telegram does not allow bots to get a complete list of all members. " +
-		"The bot can only check members it has seen sending messages or joining the group.\n\n" +
-		"To check a specific user, use the /checkuser @username command."
-
-	// Update the status message
-	editMsg := tgbotapi.NewEditMessageText(chatID, sentMsg.MessageID, resultText)
-	bot.Send(editMsg)
 }
 
 // DeleteMessage deletes a message from a chat
@@ -730,467 +602,10 @@ func main() {
 
 			// Process commands
 			if update.Message != nil && update.Message.IsCommand() {
-				// Get the command and any arguments
-				command := update.Message.Command()
-				args := update.Message.CommandArguments()
-
-				log.Printf("DEBUG: Received command /%s from user %d (%s) in chat %d (args: '%s')",
-					command, update.Message.From.ID, update.Message.From.UserName,
-					update.Message.Chat.ID, args)
-
-				// Dump full message details for debugging
-				log.Printf("DEBUG: Full message: Chat type: %s, IsGroup: %v, IsSuperGroup: %v, IsPrivate: %v",
-					update.Message.Chat.Type,
-					update.Message.Chat.IsGroup(),
-					update.Message.Chat.IsSuperGroup(),
-					update.Message.Chat.IsPrivate())
-
-				// Check if user is an admin in a group chat
-				isAdmin := true // Default to true for private chats
-				if update.Message.Chat.IsGroup() || update.Message.Chat.IsSuperGroup() {
-					isAdmin = settings.IsUserAdmin(bot, update.Message.Chat.ID, update.Message.From.ID)
-					log.Printf("DEBUG: User %d (%s) is admin in chat %d: %v",
-						update.Message.From.ID, update.Message.From.UserName, update.Message.Chat.ID, isAdmin)
-
-					// If not admin and not using start/help, silently ignore
-					if !isAdmin && command != "start" && command != "help" {
-						log.Printf("DEBUG: Non-admin user %d tried to use command /%s in group %d",
-							update.Message.From.ID, command, update.Message.Chat.ID)
-
-						continue
-					}
-				}
-
-				// Extra debug for the most common commands
-				if command == "start" || command == "help" {
-					log.Printf("DEBUG: Processing common command /%s", command)
-				}
-
-				// Now process the commands
-				switch command {
-				case "start":
-					startText := "👋 Hello! I'm a Telegram Bot that helps prevent username impersonation attacks.\n\n" +
-						"I'll monitor your group for users with usernames too similar to those you want to protect.\n\n" +
-						"Add me to your group and make me an admin to get started.\n\n" +
-						"Type /help for more information on how to use me."
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, startText)
-					log.Printf("DEBUG: Sending start message to chat %d", update.Message.Chat.ID)
-
-					sentMsg, err := bot.Send(msg)
-					if err != nil {
-						log.Printf("ERROR: Failed to send start message: %v", err)
-
-						// Detailed error info for debugging
-						if strings.Contains(err.Error(), "forbidden") {
-							log.Printf("ERROR: Bot doesn't have permission to send messages in this chat")
-						} else if strings.Contains(err.Error(), "chat not found") {
-							log.Printf("ERROR: Chat not found - chat ID: %d", update.Message.Chat.ID)
-						} else if strings.Contains(err.Error(), "bot was blocked") {
-							log.Printf("ERROR: Bot was blocked by the user")
-						}
-					} else {
-						log.Printf("DEBUG: Start message sent successfully (ID: %d)", sentMsg.MessageID)
-					}
-
-				case "help":
-					helpText := "📋 **Commands Available to All Users**:\n" +
-						"- `/start` - Get basic information about the bot\n" +
-						"- `/help` - Show this help message\n\n" +
-
-						"**🔑 Authorized User Commands** (only for users in the file):\n" +
-						"- `/addexception [user_id]` - Add user ID to exceptions list (ignored in checks)\n" +
-						"- `/removeexception [user_id]` - Remove user ID from exceptions list\n" +
-						"- `/listexceptions` - Show all user IDs in exceptions list\n" +
-						"- `/add [username]` - Add a username to the protected list\n" +
-						"- `/remove [username]` - Remove a username from the protected list\n" +
-						"- `/list` - Show all protected usernames\n" +
-						"- `/check [username]` - Check if a username is similar to protected ones\n" +
-						"- `/scangroup` - Scan all admins in the group for suspicious usernames\n" +
-						"- `/removeall [threshold]` - Remove all non-admin users with suspicious usernames\n" +
-						"- `/threshold [value]` - Set similarity threshold (0.1-0.9, default: 0.75)\n" +
-						"- `/automute [on/off]` - Enable/disable automatic muting\n" +
-						"- `/cooldown [minutes]` - Set how often the same user is checked (0 = always)\n" +
-						"- `/deletemessages [on/off]` - Enable/disable automatic message deletion\n" +
-						"- `/addauthmanager [user_id]` - Add a user who can manage exceptions and use admin commands\n" +
-						"- `/removeauthmanager [user_id]` - Remove a user from authorized managers\n" +
-						"- `/listauthmanagers` - List all authorized managers\n" +
-						"- `/mute [reply to message]` - Mute a user manually\n" +
-						"- `/debug` - Show debug information about the bot\n\n" +
-
-						"ℹ️ **Note**: All administration commands can ONLY be used by authorized users listed in the file, not by regular Telegram admins.\n\n" +
-						"ℹ️ **Getting User IDs**:\n" +
-						"To get a user's ID:\n" +
-						"1. Message @userinfobot\n" +
-						"2. Forward a message from the user\n" +
-						"3. The bot will show you the user's ID\n\n" +
-						"🔒 Add me to a group as an admin to enable full protection!"
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, helpText)
-					msg.ParseMode = "Markdown"
-					log.Printf("DEBUG: Sending help message to chat %d", update.Message.Chat.ID)
-
-					sentMsg, err := bot.Send(msg)
-					if err != nil {
-						log.Printf("ERROR: Failed to send help message: %v", err)
-
-						// Try sending without markdown if that might be the issue
-						if strings.Contains(err.Error(), "can't parse entities") {
-							log.Printf("DEBUG: Trying to send help message without markdown")
-							msg.ParseMode = ""
-							sentMsg, err = bot.Send(msg)
-							if err != nil {
-								log.Printf("ERROR: Failed to send help message without markdown: %v", err)
-							} else {
-								log.Printf("DEBUG: Help message sent successfully without markdown (ID: %d)", sentMsg.MessageID)
-							}
-						} else if strings.Contains(err.Error(), "forbidden") {
-							log.Printf("ERROR: Bot doesn't have permission to send messages in this chat")
-						}
-					} else {
-						log.Printf("DEBUG: Help message sent successfully (ID: %d)", sentMsg.MessageID)
-					}
-
-				case "addexception":
-					// Only allow authorized managers to add exceptions
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /addexception but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse user ID or username to add as exception
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Please specify a user ID or username to add as an exception.\n\n"+
-								"Format: /addexception [user_id] OR /addexception [username]\n\n"+
-								"Note: If using username, the user must be in a group with the bot.\n"+
-								"Alternatively, you can get the user's ID using @userinfobot")
-						bot.Send(msg)
-						continue
-					}
-
-					// Try to parse as user ID first
-					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
-					if err != nil {
-						// If not a valid user ID, try to get ID from username
-						userID, err = GetUserIDFromUsername(bot, args)
-						if err != nil {
-							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-								"Invalid input. Please provide either:\n"+
-									"1. A valid numeric user ID\n"+
-									"2. A username (user must be in a group with the bot)\n\n"+
-									"To get a user's ID:\n"+
-									"1. Message @userinfobot\n"+
-									"2. Forward a message from the user\n"+
-									"3. The bot will show you the user's ID")
-							bot.Send(msg)
-							continue
-						}
-					}
-
-					// Add user ID to exceptions
-					err = settings.Exceptions.AddException(userID)
-					if err != nil {
-						log.Printf("ERROR: Failed to add exception for user ID %d: %v", userID, err)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Failed to add exception for user ID %d: %v", userID, err))
-						bot.Send(msg)
-						continue
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Added user ID `%d` to exceptions list. This user will now be ignored in similarity checks.", userID))
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "removeexception":
-					// Only allow authorized managers to remove exceptions
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /removeexception but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse user ID to remove from exceptions
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Please specify a user ID to remove from exceptions.\n\n"+
-								"Format: /removeexception [user_id]\n\n"+
-								"To get a user's ID:\n"+
-								"1. Message @userinfobot\n"+
-								"2. Forward a message from the user\n"+
-								"3. The bot will show you the user's ID")
-						bot.Send(msg)
-						continue
-					}
-
-					// Parse user ID
-					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
-					if err != nil {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid user ID. Please provide a valid numeric user ID.\n\n"+
-								"To get a user's ID:\n"+
-								"1. Message @userinfobot\n"+
-								"2. Forward a message from the user\n"+
-								"3. The bot will show you the user's ID")
-						bot.Send(msg)
-						continue
-					}
-
-					// Remove user ID from exceptions
-					err = settings.Exceptions.RemoveException(userID)
-					if err != nil {
-						log.Printf("ERROR: Failed to remove exception for user ID %d: %v", userID, err)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Failed to remove exception for user ID %d: %v", userID, err))
-						bot.Send(msg)
-						continue
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Removed user ID `%d` from exceptions list. This user will now be checked in similarity checks.", userID))
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "listexceptions":
-					// Only allow authorized managers to list exceptions
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /listexceptions but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Get list of exceptions
-					exceptions := settings.Exceptions.ListExceptions()
-
-					var responseText string
-					if len(exceptions) == 0 {
-						responseText = "No user ID exceptions configured. Use /addexception to add users to ignore in similarity checks."
-					} else {
-						responseText = fmt.Sprintf("📋 Exceptions list (%d users):\n\n", len(exceptions))
-						for i, userID := range exceptions {
-							responseText += fmt.Sprintf("%d. User ID: `%d`\n", i+1, userID)
-						}
-						responseText += "\nThese users are ignored in similarity checks."
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "addauthmanager":
-					// Only allow authorized managers to add other authorized managers
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /addauthmanager but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse user ID to add as authorized manager
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Please specify a user ID to add as an authorized exception manager.\n\n"+
-								"Format: /addauthmanager [user_id]\n\n"+
-								"To get a user's ID:\n"+
-								"1. Message @userinfobot\n"+
-								"2. Forward a message from the user\n"+
-								"3. The bot will show you the user's ID")
-						bot.Send(msg)
-						continue
-					}
-
-					// Parse user ID
-					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
-					if err != nil {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid user ID. Please provide a valid numeric user ID.")
-						bot.Send(msg)
-						continue
-					}
-
-					// Add user ID to authorized managers
-					err = settings.ExceptionAuth.AddAuthorizedUser(userID)
-					if err != nil {
-						log.Printf("ERROR: Failed to add authorized manager with ID %d: %v", userID, err)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Failed to add authorized manager with ID %d: %v", userID, err))
-						bot.Send(msg)
-						continue
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Added user ID `%d` to authorized exception managers. This user can now manage exceptions.", userID))
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "removeauthmanager":
-					// Only allow authorized managers to remove other authorized managers
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /removeauthmanager but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse user ID to remove from authorized managers
-					args := update.Message.CommandArguments()
-					if args == "" {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Please specify a user ID to remove from authorized exception managers.\n\n"+
-								"Format: /removeauthmanager [user_id]")
-						bot.Send(msg)
-						continue
-					}
-
-					// Parse user ID
-					userID, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
-					if err != nil {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid user ID. Please provide a valid numeric user ID.")
-						bot.Send(msg)
-						continue
-					}
-
-					// Remove user ID from authorized managers
-					err = settings.ExceptionAuth.RemoveAuthorizedUser(userID)
-					if err != nil {
-						log.Printf("ERROR: Failed to remove authorized manager with ID %d: %v", userID, err)
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Failed to remove authorized manager with ID %d: %v", userID, err))
-						bot.Send(msg)
-						continue
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-						fmt.Sprintf("Removed user ID `%d` from authorized exception managers. This user can no longer manage exceptions.", userID))
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "listauthmanagers":
-					// Only allow authorized managers to list other authorized managers
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /listauthmanagers but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Get list of authorized managers
-					managers := settings.ExceptionAuth.ListAuthorizedUsers()
-
-					var responseText string
-					if len(managers) == 0 {
-						responseText = "No authorized exception managers configured. Use /addauthmanager to add users who can manage exceptions."
-					} else {
-						responseText = fmt.Sprintf("📋 Authorized Exception Managers (%d users):\n\n", len(managers))
-						for i, userID := range managers {
-							responseText += fmt.Sprintf("%d. User ID: `%d`\n", i+1, userID)
-						}
-						responseText += "\nThese users can manage exceptions."
-					}
-
-					msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
-					msg.ParseMode = "Markdown"
-					bot.Send(msg)
-
-				case "deletemessages":
-					// Only allow authorized managers to change message deletion settings
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /deletemessages but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse delete messages setting
-					args := update.Message.CommandArguments()
-					if args == "" {
-						status := "disabled"
-						if settings.DeleteMessages {
-							status = "enabled"
-						}
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Message deletion is currently %s. Use /deletemessages on or /deletemessages off to change.",
-								status))
-						bot.Send(msg)
-						continue
-					}
-
-					args = strings.ToLower(args)
-					if args == "on" || args == "enable" || args == "true" || args == "1" {
-						settings.DeleteMessages = true
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Message deletion enabled. Messages from users with similar usernames will be automatically deleted.")
-						bot.Send(msg)
-					} else if args == "off" || args == "disable" || args == "false" || args == "0" {
-						settings.DeleteMessages = false
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Message deletion disabled. Messages from users with similar usernames will be kept.")
-						bot.Send(msg)
-					} else {
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Invalid value. Use 'on' or 'off' to enable or disable message deletion.")
-						bot.Send(msg)
-					}
-
-				case "automute":
-					// Only allow authorized managers to change auto-mute settings
-					if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
-						log.Printf("DEBUG: User %d (@%s) tried to use /automute but is not authorized",
-							update.Message.From.ID, update.Message.From.UserName)
-
-						continue
-					}
-
-					// Parse auto-mute setting
-					args := update.Message.CommandArguments()
-					if args == "" {
-						status := "disabled"
-						if settings.AutoMuteEnabled {
-							status = "enabled"
-						}
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Auto-mute is currently %s. Use /automute on or /automute off to change.\n\nCurrent auto-mute threshold: %.2f",
-								status, settings.AutoMuteThreshold))
-						bot.Send(msg)
-						continue
-					}
-
-					args = strings.ToLower(args)
-					if args == "on" || args == "enable" || args == "true" || args == "1" {
-						settings.AutoMuteEnabled = true
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							fmt.Sprintf("Auto-mute enabled. Users with username similarity above %.2f will be automatically muted.",
-								settings.AutoMuteThreshold))
-						bot.Send(msg)
-					} else if args == "off" || args == "disable" || args == "false" || args == "0" {
-						settings.AutoMuteEnabled = false
-						msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-							"Auto-mute disabled. Users with similar usernames will not be automatically muted.")
-						bot.Send(msg)
-					} else {
-						// Check if this is a threshold setting
-						threshold, err := strconv.ParseFloat(args, 64)
-						if err == nil && threshold >= 0 && threshold <= 1 {
-							settings.AutoMuteThreshold = threshold
-							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-								fmt.Sprintf("Auto-mute threshold set to %.2f", threshold))
-							bot.Send(msg)
-						} else {
-							msg := tgbotapi.NewMessage(update.Message.Chat.ID,
-								"Invalid value. Use 'on' or 'off' to enable or disable auto-mute, or a value between 0 and 1 to set the threshold.")
-							bot.Send(msg)
-						}
-					}
-
+				// Call the HandleCommand function from commands.go
+				if HandleCommand(bot, &settings, &update) {
+					// Command was handled, continue to next update
+					continue
 				}
 			} else {
 				// Instead, just log that we received a text message but ignoring it
@@ -1214,11 +629,6 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		return
 	}
 
-	// Convert username and names to lowercase
-	username = strings.ToLower(username)
-	firstName = strings.ToLower(firstName)
-	lastName = strings.ToLower(lastName)
-
 	// Build full name from first and last name if available
 	var fullName string
 	if firstName != "" && lastName != "" {
@@ -1234,13 +644,10 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 	// First check username if available
 	if username != "" {
-		log.Printf("DEBUG: Checking username @%s against %d known usernames with threshold %.2f",
-			username, len(KnownUsernames), settings.SimilarityThreshold)
+		// First check against admin usernames and first names (priority check)
+		log.Printf("DEBUG: Checking username @%s against admin names with threshold %.2f",
+			username, settings.SimilarityThreshold)
 
-		// Check for similar usernames
-		similarUsernames = FindSimilarUsernamesWithExceptions(username, settings.SimilarityThreshold, settings.Exceptions)
-
-		// Also check similarity against admin usernames and first names
 		for _, admin := range adminInfo {
 			// Skip if admin is in exceptions list
 			if settings.Exceptions.IsExcepted(admin.UserID) {
@@ -1249,20 +656,27 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin username if available
 			if admin.Username != "" {
-				adminUsernameLower := strings.ToLower(admin.Username)
+				adminUsernameLower := admin.Username
 				similarity := JaroWinkler(username, adminUsernameLower)
 				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   "@" + admin.Username, // Keep original case for display
 						Similarity: similarity,
 					})
+					// Break after finding the first admin similarity
+					break
 				}
+			}
+
+			// Skip further checks if we already found a similar admin
+			if len(similarToAdmins) > 0 {
+				break
 			}
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := strings.ToLower(admin.FirstName)
-				adminLastNameLower := strings.ToLower(admin.LastName)
+				adminFirstNameLower := admin.FirstName
+				adminLastNameLower := admin.LastName
 				adminFullName := adminFirstNameLower
 				if adminLastNameLower != "" {
 					adminFullName += " " + adminLastNameLower
@@ -1275,24 +689,35 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 						Username:   admin.FirstName + " " + admin.LastName + " (full name)", // First name, no @ symbol
 						Similarity: fullNameSimilarity,
 					})
+					// Break after finding the first admin similarity
+					break
 				}
 			}
 		}
 
-		hasSimilarities = len(similarUsernames) > 0 || len(similarToAdmins) > 0
+		// Only check against known usernames if no admin matches were found
+		if len(similarToAdmins) == 0 {
+			log.Printf("DEBUG: No admin similarities found, checking username @%s against %d known usernames with threshold %.2f",
+				username, len(KnownUsernames), settings.SimilarityThreshold)
 
-		if len(similarUsernames) > 0 {
-			log.Printf("DEBUG: Found %d similar usernames for @%s", len(similarUsernames), username)
-			for _, result := range similarUsernames {
-				log.Printf("DEBUG: Similar username: %s (%.2f%% similarity)",
-					result.Username, result.Similarity*100)
-			}
+			// Check for similar usernames in known usernames list
+			similarUsernames = FindSimilarUsernamesWithExceptions(username, settings.SimilarityThreshold, settings.Exceptions)
 		}
+
+		hasSimilarities = len(similarUsernames) > 0 || len(similarToAdmins) > 0
 
 		if len(similarToAdmins) > 0 {
 			log.Printf("DEBUG: Found %d admin identifiers similar to @%s", len(similarToAdmins), username)
 			for _, result := range similarToAdmins {
 				log.Printf("DEBUG: Similar admin identifier: %s (%.2f%% similarity)",
+					result.Username, result.Similarity*100)
+			}
+		}
+
+		if len(similarUsernames) > 0 {
+			log.Printf("DEBUG: Found %d similar usernames for @%s", len(similarUsernames), username)
+			for _, result := range similarUsernames {
+				log.Printf("DEBUG: Similar username: %s (%.2f%% similarity)",
 					result.Username, result.Similarity*100)
 			}
 		}
@@ -1306,32 +731,22 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 	if !hasSimilarities && fullName != "" {
 		log.Printf("DEBUG: Checking full name '%s' as fallback", fullName)
 
-		// Check full name
-		similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, settings.Exceptions)
-
-		// Also check similarity against admin usernames and first names
+		// First check against admin usernames and first names (priority check)
 		for _, admin := range adminInfo {
 			// Skip if admin is in exceptions list
 			if settings.Exceptions.IsExcepted(admin.UserID) {
 				continue
 			}
 
-			// Check against admin username if available
-			if admin.Username != "" {
-				adminUsernameLower := strings.ToLower(admin.Username)
-				fullNameSimilarity := JaroWinkler(fullName, adminUsernameLower)
-				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
-					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
-						Username:   "@" + admin.Username + " (full name)",
-						Similarity: fullNameSimilarity,
-					})
-				}
+			// Skip further checks if we already found a similar admin
+			if len(similarToAdmins) > 0 {
+				break
 			}
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := strings.ToLower(admin.FirstName)
-				adminLastNameLower := strings.ToLower(admin.LastName)
+				adminFirstNameLower := admin.FirstName
+				adminLastNameLower := admin.LastName
 				adminFullName := adminFirstNameLower
 				if adminLastNameLower != "" {
 					adminFullName += " " + adminLastNameLower
@@ -1343,11 +758,27 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 						Username:   admin.FirstName + " " + admin.LastName + " (full name)",
 						Similarity: fullNameSimilarity,
 					})
+					// Break after finding the first admin similarity
+					break
 				}
 			}
 		}
 
+		// Only check against known usernames if no admin matches were found
+		if len(similarToAdmins) == 0 {
+			// Check full name against known usernames
+			similarFirstNames = FindSimilarUsernamesWithExceptions(fullName, settings.SimilarityThreshold, settings.Exceptions)
+		}
+
 		hasSimilarities = len(similarFirstNames) > 0 || len(similarToAdmins) > 0
+
+		if len(similarToAdmins) > 0 {
+			log.Printf("DEBUG: Found %d admin identifiers similar to full name '%s'", len(similarToAdmins), fullName)
+			for _, result := range similarToAdmins {
+				log.Printf("DEBUG: Similar admin identifier: %s (%.2f%% similarity)",
+					result.Username, result.Similarity*100)
+			}
+		}
 
 		if len(similarFirstNames) > 0 {
 			log.Printf("DEBUG: Found %d similar names for full name '%s'", len(similarFirstNames), fullName)
@@ -1382,11 +813,11 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 		// Determine how to identify the user in the message
 		if username != "" {
-			userIdentifier = fmt.Sprintf("@%s (ID: `%d`)", username, userID)
+			userIdentifier = fmt.Sprintf("@*%s* - ID: `%d`", username, userID)
 		} else if fullName != "" {
-			userIdentifier = fmt.Sprintf("%s (ID: `%d`)", fullName, userID)
+			userIdentifier = fmt.Sprintf("*%s* - ID: `%d`", fullName, userID)
 		} else {
-			userIdentifier = fmt.Sprintf("User ID `%d`", userID)
+			userIdentifier = fmt.Sprintf("User ID: `%d`", userID)
 		}
 
 		if isNewUser {
@@ -1399,7 +830,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		if len(similarUsernames) > 0 {
 			notificationText += " has similar username to official accounts:\n\n"
 			for _, result := range similarUsernames {
-				notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
+				notificationText += fmt.Sprintf("*%s* (%.2f%% similarity)\n",
 					result.Username, result.Similarity*100)
 			}
 		}
@@ -1422,12 +853,14 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 					}
 				}
 
+				// Simplify the formatting to make it more reliable with Markdown
+				adminName := strings.TrimPrefix(result.Username, "@")
 				if adminUserID > 0 {
-					notificationText += fmt.Sprintf("%s (ID: `%d`) (%.2f%% similarity)\n",
-						strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
+					notificationText += fmt.Sprintf("*%s* - ID: `%d` - Similarity: %.2f%%\n",
+						adminName, adminUserID, result.Similarity*100)
 				} else {
-					notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
-						strings.TrimPrefix(result.Username, "@"), result.Similarity*100)
+					notificationText += fmt.Sprintf("*%s* - Similarity: %.2f%%\n",
+						adminName, result.Similarity*100)
 				}
 			}
 		}
@@ -1436,7 +869,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		if len(similarFirstNames) > 0 {
 			notificationText += "\nhas similar first name to:\n"
 			for _, result := range similarFirstNames {
-				notificationText += fmt.Sprintf("%s (%.2f%% similarity)\n",
+				notificationText += fmt.Sprintf("*%s* (%.2f%% similarity)\n",
 					result.Username, result.Similarity*100)
 			}
 		}
@@ -1578,9 +1011,9 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Add user identifier
 			if username != "" {
-				fmt.Fprintf(&auditText, "Scammer: @%s (ID: `%d`)\n", username, userID)
+				fmt.Fprintf(&auditText, "Scammer: @*%s* - ID: `%d`\n", username, userID)
 			} else if fullName != "" {
-				fmt.Fprintf(&auditText, "Scammer: %s (ID: `%d`)\n", fullName, userID)
+				fmt.Fprintf(&auditText, "Scammer: *%s* - ID: `%d`\n", fullName, userID)
 			} else {
 				fmt.Fprintf(&auditText, "User ID: `%d`\n", userID)
 			}
@@ -1589,7 +1022,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			if len(similarUsernames) > 0 {
 				auditText.WriteString("\nSimilar to official accounts:\n")
 				for _, result := range similarUsernames {
-					fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
+					fmt.Fprintf(&auditText, "- *%s* - Similarity: %.2f%%\n",
 						result.Username, result.Similarity*100)
 				}
 			}
@@ -1607,12 +1040,13 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 						}
 					}
 
+					adminName := strings.TrimPrefix(result.Username, "@")
 					if adminUserID > 0 {
-						fmt.Fprintf(&auditText, "- %s (ID: `%d`) (%.2f%% similarity)\n",
-							strings.TrimPrefix(result.Username, "@"), adminUserID, result.Similarity*100)
+						fmt.Fprintf(&auditText, "- *%s* - ID: `%d` - Similarity: %.2f%%\n",
+							adminName, adminUserID, result.Similarity*100)
 					} else {
-						fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
-							strings.TrimPrefix(result.Username, "@"), result.Similarity*100)
+						fmt.Fprintf(&auditText, "- *%s* - Similarity: %.2f%%\n",
+							adminName, result.Similarity*100)
 					}
 				}
 			}
@@ -1621,7 +1055,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			if len(similarFirstNames) > 0 {
 				auditText.WriteString("\nSimilar first name to:\n")
 				for _, result := range similarFirstNames {
-					fmt.Fprintf(&auditText, "- %s (%.2f%% similarity)\n",
+					fmt.Fprintf(&auditText, "- *%s* - Similarity: %.2f%%\n",
 						result.Username, result.Similarity*100)
 				}
 			}
