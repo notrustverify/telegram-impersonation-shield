@@ -631,6 +631,16 @@ func main() {
 	}
 }
 
+// Helper function to escape special Markdown characters
+func escapeMarkdown(text string) string {
+	specialChars := []string{"_", "*", "`", "["}
+	escaped := text
+	for _, char := range specialChars {
+		escaped = strings.ReplaceAll(escaped, char, "\\"+char)
+	}
+	return escaped
+}
+
 // checkAndMuteUser checks a username for similarity and mutes the user if necessary
 // isNewUser indicates if this is a user who just joined (triggers different notification message)
 func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64, userID int64, username string, firstName string, lastName string, isNewUser bool, messageText string, replyToMessageID int, chatTitle string) {
@@ -846,7 +856,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		if len(similarUsernames) > 0 {
 			notificationText += " has similar username to official accounts:\n\n"
 			for _, result := range similarUsernames {
-				notificationText += fmt.Sprintf("*%s* (%.2f%% similarity)\n",
+				notificationText += fmt.Sprintf("*%s* - Similarity: %.2f%%\n",
 					result.Username, result.Similarity*100)
 			}
 		}
@@ -885,7 +895,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		if len(similarFirstNames) > 0 {
 			notificationText += "\nhas similar first name to:\n"
 			for _, result := range similarFirstNames {
-				notificationText += fmt.Sprintf("*%s* (%.2f%% similarity)\n",
+				notificationText += fmt.Sprintf("*%s* - Similarity: %.2f%%\n",
 					result.Username, result.Similarity*100)
 			}
 		}
@@ -978,15 +988,15 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 				muteHours := settings.MuteDuration.Hours()
 				if isSimilarFirstName {
 					notificationText += fmt.Sprintf(
-						"\n🔇 User has been automatically muted for %.1f hours due to first name similarity (%.2f%%) with %s.",
+						"\n🔇 User has been automatically muted for %.1f hours due to first name similarity. Similarity: %.2f%% with *%s*.",
 						muteHours, highestSimilarity*100, mostSimilarUsername)
 				} else if isSimilarToAdmin {
 					notificationText += fmt.Sprintf(
-						"\n🔇 User has been automatically muted for %.1f hours due to username similarity (%.2f%%) with admin %s.",
+						"\n🔇 User has been automatically muted for %.1f hours due to username similarity. Similarity: %.2f%% with admin *%s*.",
 						muteHours, highestSimilarity*100, mostSimilarUsername)
 				} else {
 					notificationText += fmt.Sprintf(
-						"\n🔇 User has been automatically muted for %.1f hours due to username similarity (%.2f%%) with %s.",
+						"\n🔇 User has been automatically muted for %.1f hours due to username similarity. Similarity: %.2f%% with *%s*.",
 						muteHours, highestSimilarity*100, mostSimilarUsername)
 				}
 			}
@@ -999,10 +1009,70 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		msg := tgbotapi.NewMessage(chatID, notificationText)
 		msg.ParseMode = "Markdown"
 
+		// Log a truncated version of the message for debugging
+		if len(notificationText) > 50 {
+			log.Printf("DEBUG: Sending notification message with Markdown (first 50 chars): %s...", notificationText[:50])
+		} else {
+			log.Printf("DEBUG: Sending notification message with Markdown: %s", notificationText)
+		}
+
 		// Send notification to the chat
 		_, err := bot.Send(msg)
 		if err != nil {
 			log.Printf("ERROR: Failed to send similarity notification: %v", err)
+
+			// Log the error details and message content for debugging
+			if strings.Contains(err.Error(), "parse entities") {
+				errIndex := strings.Index(err.Error(), "byte offset")
+				if errIndex > 0 {
+					offsetInfo := err.Error()[errIndex:]
+					offsetParts := strings.Split(offsetInfo, " ")
+					if len(offsetParts) > 2 {
+						offsetStr := offsetParts[2]
+						offset, parseErr := strconv.Atoi(offsetStr)
+						if parseErr == nil && offset > 0 && offset < len(notificationText) {
+							// Show the content around the problematic area
+							startIdx := offset - 10
+							if startIdx < 0 {
+								startIdx = 0
+							}
+							endIdx := offset + 10
+							if endIdx > len(notificationText) {
+								endIdx = len(notificationText)
+							}
+							log.Printf("ERROR: Markdown parse error at character %d, surrounding content: '%s'",
+								offset, notificationText[startIdx:endIdx])
+						}
+					}
+				}
+			}
+
+			// Try with HTML mode instead of Markdown as a fallback
+			msg.ParseMode = "HTML"
+			// Convert basic Markdown to HTML
+			htmlText := strings.ReplaceAll(notificationText, "*", "<b>")
+			htmlText = strings.ReplaceAll(htmlText, "*", "</b>")
+			htmlText = strings.ReplaceAll(htmlText, "`", "<code>")
+			htmlText = strings.ReplaceAll(htmlText, "`", "</code>")
+			msg.Text = htmlText
+
+			_, err = bot.Send(msg)
+			if err != nil {
+				log.Printf("ERROR: Failed to send similarity notification with HTML fallback: %v", err)
+
+				// Last resort: send without formatting
+				msg.ParseMode = ""
+				msg.Text = strings.ReplaceAll(notificationText, "*", "")
+				msg.Text = strings.ReplaceAll(msg.Text, "`", "")
+				_, err = bot.Send(msg)
+				if err != nil {
+					log.Printf("ERROR: Failed to send even plain text notification: %v", err)
+				} else {
+					log.Printf("DEBUG: Sent notification as plain text (no formatting)")
+				}
+			} else {
+				log.Printf("DEBUG: Sent notification with HTML formatting instead of Markdown")
+			}
 
 			// Check if it might be a permission issue
 			if strings.Contains(err.Error(), "forbidden") || strings.Contains(err.Error(), "not enough rights") {
@@ -1086,9 +1156,45 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			auditMsg := tgbotapi.NewMessage(settings.AuditGroupID, auditText.String())
 			auditMsg.ParseMode = "Markdown"
+
+			// Log audit message for debugging
+			auditMsgContent := auditText.String()
+			if len(auditMsgContent) > 50 {
+				log.Printf("DEBUG: Sending audit message (first 50 chars): %s...", auditMsgContent[:50])
+			} else {
+				log.Printf("DEBUG: Sending audit message: %s", auditMsgContent)
+			}
+
 			_, err = bot.Send(auditMsg)
 			if err != nil {
 				log.Printf("ERROR: Failed to send audit notification: %v", err)
+
+				// Try with HTML mode instead of Markdown as a fallback
+				auditMsg.ParseMode = "HTML"
+				// Convert basic Markdown to HTML
+				htmlText := strings.ReplaceAll(auditMsgContent, "*", "<b>")
+				htmlText = strings.ReplaceAll(htmlText, "*", "</b>")
+				htmlText = strings.ReplaceAll(htmlText, "`", "<code>")
+				htmlText = strings.ReplaceAll(htmlText, "`", "</code>")
+				auditMsg.Text = htmlText
+
+				_, err = bot.Send(auditMsg)
+				if err != nil {
+					log.Printf("ERROR: Failed to send audit notification with HTML fallback: %v", err)
+
+					// Last resort: send without formatting
+					auditMsg.ParseMode = ""
+					auditMsg.Text = strings.ReplaceAll(auditMsgContent, "*", "")
+					auditMsg.Text = strings.ReplaceAll(auditMsg.Text, "`", "")
+					_, err = bot.Send(auditMsg)
+					if err != nil {
+						log.Printf("ERROR: Failed to send even plain text audit notification: %v", err)
+					} else {
+						log.Printf("DEBUG: Sent audit notification as plain text (no formatting)")
+					}
+				} else {
+					log.Printf("DEBUG: Sent audit notification with HTML formatting instead of Markdown")
+				}
 			}
 		}
 	}
