@@ -258,9 +258,10 @@ type BotSettings struct {
 	RecentlyChecked     map[int64]RecentlyCheckedUser
 	Mutex               sync.RWMutex
 	// Cache for admin usernames by chat ID
-	AdminInfo       map[int64][]AdminInfo
-	AdminCacheMutex sync.RWMutex
-	AdminCacheTime  map[int64]time.Time
+	AdminInfo        map[int64][]AdminInfo
+	AdminCacheMutex  sync.RWMutex
+	AdminCacheTime   map[int64]time.Time
+	AdminCacheExpiry time.Duration // How long to keep admin cache before refreshing
 	// Exceptions manager
 	Exceptions *ExceptionsManager
 	// Exception Managers Auth
@@ -404,6 +405,7 @@ func main() {
 		RecentlyChecked:     make(map[int64]RecentlyCheckedUser),
 		AdminInfo:           make(map[int64][]AdminInfo),
 		AdminCacheTime:      make(map[int64]time.Time),
+		AdminCacheExpiry:    1 * time.Hour, // Default to refresh admin cache every hour
 		Exceptions:          NewExceptionsManager("exceptions.txt"),
 		ExceptionAuth:       exceptionAuth,
 	}
@@ -471,6 +473,14 @@ func main() {
 		}
 	}
 
+	// Set admin cache expiry from env or use default
+	if expiryStr := os.Getenv("ADMIN_CACHE_EXPIRY_HOURS"); expiryStr != "" {
+		if hours, err := strconv.ParseFloat(expiryStr, 64); err == nil && hours > 0 {
+			settings.AdminCacheExpiry = time.Duration(hours * float64(time.Hour))
+			log.Printf("Using admin cache expiry from environment: %.1f hours", hours)
+		}
+	}
+
 	// Start a goroutine to periodically clean up old checked users
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
@@ -483,7 +493,13 @@ func main() {
 
 	// Start a goroutine to periodically refresh admin caches
 	go func() {
-		ticker := time.NewTicker(30 * time.Minute)
+		// Use half the cache expiry time as the refresh interval to ensure we refresh before expiration
+		refreshInterval := settings.AdminCacheExpiry / 2
+		if refreshInterval < 10*time.Minute {
+			refreshInterval = 10 * time.Minute // Minimum 10 minutes to avoid too frequent refreshes
+		}
+
+		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
 
 		for range ticker.C {
@@ -1082,10 +1098,10 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 func (s *BotSettings) GetAdminInfo(bot *tgbotapi.BotAPI, chatID int64) []AdminInfo {
 	s.AdminCacheMutex.RLock()
 
-	// Check if we have a cached admin list that's not too old (less than 30 minutes)
+	// Check if we have a cached admin list that's not too old
 	if adminList, exists := s.AdminInfo[chatID]; exists {
 		lastUpdated := s.AdminCacheTime[chatID]
-		if time.Since(lastUpdated) < 30*time.Minute {
+		if time.Since(lastUpdated) < s.AdminCacheExpiry {
 			s.AdminCacheMutex.RUnlock()
 			log.Printf("DEBUG: Using cached admin info for chat %d, %d admins",
 				chatID, len(adminList))
