@@ -99,7 +99,7 @@ func TestDeveloperUsernameSimilarity(t *testing.T) {
 		"di0m4rk0", "d1o_mark0", "diomar_k0", "di0mark_zero",
 
 		"b4byxdd", "baby_xdd", "babyx_d", "babyyxdd", "b4by_xdd", "b_a_b_yxdd",
-		"babyxddd", "bbyxdd", "babbyxdd", "ba_by_xdd",
+		"babyxddd", "bbyxdd", "babbyxdd", "ba_by_xdd", "bqbyxdd",
 
 		"MaudBannw4rt", "Maud_Bannwart", "M4udBannwart", "MaudB4nnwart",
 		"MaudBannw@rt", "MaudBannwa_rt", "MaudBann_wart", "Maud_B4nnwart",

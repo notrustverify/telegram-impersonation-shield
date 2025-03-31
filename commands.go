@@ -92,6 +92,7 @@ func HandleCommand(bot *tgbotapi.BotAPI, settings *BotSettings, update *tgbotapi
 			"- `/add [username]` - Add a username to the protected list\n" +
 			"- `/remove [username]` - Remove a username from the protected list\n" +
 			"- `/list` - Show all protected usernames\n" +
+			"- `/listadmins` - Show raw admin information for the current chat\n" +
 			"- `/check [username]` - Check if a username is similar to protected ones\n" +
 			"- `/scangroup` - Scan all admins in the group for suspicious usernames\n" +
 			"- `/removeall [threshold]` - Remove all non-admin users with suspicious usernames\n" +
@@ -718,6 +719,111 @@ func HandleCommand(bot *tgbotapi.BotAPI, settings *BotSettings, update *tgbotapi
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText.String())
 		msg.ParseMode = "Markdown"
 		bot.Send(msg)
+
+	case "listadmins":
+		// Only allow authorized managers to list raw admin information
+		if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+			log.Printf("DEBUG: User %d (@%s) tried to use /listadmins but is not authorized",
+				update.Message.From.ID, update.Message.From.UserName)
+			return true
+		}
+
+		// This command must be used in a group chat
+		if !update.Message.Chat.IsGroup() && !update.Message.Chat.IsSuperGroup() {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				"This command must be used in a group chat to show admin information.")
+			bot.Send(msg)
+			return true
+		}
+
+		// Force refresh admin information
+		adminInfo := settings.UpdateAdminCache(bot, update.Message.Chat.ID)
+
+		var responseText strings.Builder
+		if len(adminInfo) == 0 {
+			responseText.WriteString("No admin information found for this chat.")
+		} else {
+			fmt.Fprintf(&responseText, "📋 Admin Information for Chat %s (ID: %d):\n\n",
+				update.Message.Chat.Title, update.Message.Chat.ID)
+
+			for i, admin := range adminInfo {
+				fmt.Fprintf(&responseText, "%d. Admin ID: `%d`\n", i+1, admin.UserID)
+
+				// Username information
+				if admin.Username != "" {
+					fmt.Fprintf(&responseText, "   Username: `@%s`\n", admin.Username)
+					fmt.Fprintf(&responseText, "   Normalized Username: `%s`\n", strings.ToLower(strings.ReplaceAll(admin.Username, " ", "")))
+				} else {
+					fmt.Fprintf(&responseText, "   Username: (none)\n")
+				}
+
+				// First name information
+				if admin.FirstName != "" {
+					fmt.Fprintf(&responseText, "   First Name: `%s`\n", admin.FirstName)
+					fmt.Fprintf(&responseText, "   Normalized First Name: `%s`\n", strings.ToLower(strings.ReplaceAll(admin.FirstName, " ", "")))
+				} else {
+					fmt.Fprintf(&responseText, "   First Name: (none)\n")
+				}
+
+				// Last name information
+				if admin.LastName != "" {
+					fmt.Fprintf(&responseText, "   Last Name: `%s`\n", admin.LastName)
+					fmt.Fprintf(&responseText, "   Normalized Last Name: `%s`\n", strings.ToLower(strings.ReplaceAll(admin.LastName, " ", "")))
+				} else {
+					fmt.Fprintf(&responseText, "   Last Name: (none)\n")
+				}
+
+				// If both first and last name are present, show full name
+				if admin.FirstName != "" && admin.LastName != "" {
+					fullName := admin.FirstName + " " + admin.LastName
+					normalizedFullName := strings.ToLower(strings.ReplaceAll(fullName, " ", ""))
+					fmt.Fprintf(&responseText, "   Full Name: `%s`\n", fullName)
+					fmt.Fprintf(&responseText, "   Normalized Full Name: `%s`\n", normalizedFullName)
+				}
+
+				responseText.WriteString("\n")
+			}
+
+			responseText.WriteString("These are the admin names that will be used for similarity comparisons.")
+			responseText.WriteString("\nNormalized names have spaces removed and are converted to lowercase.")
+		}
+
+		// Send the response - splitting if necessary to avoid message length limits
+		if responseText.Len() > 4000 {
+			// If message is too long, send a summary instead
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				fmt.Sprintf("Found %d admins in this chat. The message is too long to display all details.\n\nSending first few admins:", len(adminInfo)))
+			bot.Send(msg)
+
+			// Only show first 5 admins
+			var shortResponseText strings.Builder
+			for i, admin := range adminInfo {
+				if i >= 5 {
+					break
+				}
+
+				fmt.Fprintf(&shortResponseText, "%d. Admin ID: `%d`\n", i+1, admin.UserID)
+				if admin.Username != "" {
+					fmt.Fprintf(&shortResponseText, "   Username: `@%s`\n", admin.Username)
+				}
+				if admin.FirstName != "" {
+					fmt.Fprintf(&shortResponseText, "   First Name: `%s`\n", admin.FirstName)
+				}
+				if admin.LastName != "" {
+					fmt.Fprintf(&shortResponseText, "   Last Name: `%s`\n", admin.LastName)
+				}
+				shortResponseText.WriteString("\n")
+			}
+			fmt.Fprintf(&shortResponseText, "... and %d more admins", len(adminInfo)-5)
+
+			msg = tgbotapi.NewMessage(update.Message.Chat.ID, shortResponseText.String())
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+		} else {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText.String())
+			msg.ParseMode = "Markdown"
+			bot.Send(msg)
+		}
 
 	// Additional commands can be added here as needed
 
