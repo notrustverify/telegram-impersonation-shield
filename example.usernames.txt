@@ -1,0 +1,9 @@
+# List of usernames to check for similarity
+# Each line is a username, lines starting with # are comments
+
+# Official accounts
+alephium
+alph_official
+alphofficial
+alephium_org
+alph_foundation
