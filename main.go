@@ -182,11 +182,11 @@ type SimilarUsernameResult struct {
 func FindSimilarUsernamesWithExceptions(username string, threshold float64, exceptions *ExceptionsManager) []SimilarUsernameResult {
 	var results []SimilarUsernameResult
 
-	// Convert input username to lowercase
-	usernameLower := username
+	// Normalize input username
+	usernameLower := normalizeName(username)
 
 	for _, knownUsername := range KnownUsernames {
-		// Convert known username to lowercase for comparison
+		// Known usernames are already normalized during loading
 		knownUsernameLower := knownUsername
 		similarity := JaroWinkler(usernameLower, knownUsernameLower)
 
@@ -672,7 +672,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin username if available
 			if admin.Username != "" {
-				adminUsernameLower := admin.Username
+				adminUsernameLower := normalizeName(admin.Username)
 				similarity := JaroWinkler(username, adminUsernameLower)
 				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
@@ -691,15 +691,23 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := admin.FirstName
-				adminLastNameLower := admin.LastName
-				adminFullName := adminFirstNameLower
-				if adminLastNameLower != "" {
-					adminFullName += " " + adminLastNameLower
+				adminFirstNameLower := normalizeName(admin.FirstName)
+				adminLastNameLower := ""
+				if admin.LastName != "" {
+					adminLastNameLower = normalizeName(admin.LastName)
 				}
 
+				// Build normalized admin full name
+				adminFullName := adminFirstNameLower
+				if adminLastNameLower != "" {
+					adminFullName += adminLastNameLower // No spaces since normalizeName removes them
+				}
+
+				// Normalize the user's full name for comparison
+				normalizedFullName := normalizeName(fullName)
+
 				// Check full name similarity
-				fullNameSimilarity := JaroWinkler(fullName, adminFullName)
+				fullNameSimilarity := JaroWinkler(normalizedFullName, adminFullName)
 				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   admin.FirstName + " " + admin.LastName + " (full name)", // First name, no @ symbol
@@ -761,14 +769,23 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 
 			// Check against admin first name if available
 			if admin.FirstName != "" {
-				adminFirstNameLower := admin.FirstName
-				adminLastNameLower := admin.LastName
-				adminFullName := adminFirstNameLower
-				if adminLastNameLower != "" {
-					adminFullName += " " + adminLastNameLower
+				adminFirstNameLower := normalizeName(admin.FirstName)
+				adminLastNameLower := ""
+				if admin.LastName != "" {
+					adminLastNameLower = normalizeName(admin.LastName)
 				}
 
-				fullNameSimilarity := JaroWinkler(fullName, adminFullName)
+				// Build normalized admin full name
+				adminFullName := adminFirstNameLower
+				if adminLastNameLower != "" {
+					adminFullName += adminLastNameLower // No spaces since normalizeName removes them
+				}
+
+				// Normalize the user's full name for comparison
+				normalizedFullName := normalizeName(fullName)
+
+				// Check full name similarity
+				fullNameSimilarity := JaroWinkler(normalizedFullName, adminFullName)
 				if fullNameSimilarity >= settings.SimilarityThreshold && fullNameSimilarity < 1.0 {
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   admin.FirstName + " " + admin.LastName + " (full name)",
