@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -545,6 +546,176 @@ func HandleCommand(bot *tgbotapi.BotAPI, settings *BotSettings, update *tgbotapi
 
 		// Send the debug info
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, debugInfo.String())
+		msg.ParseMode = "Markdown"
+		bot.Send(msg)
+
+	case "cooldown":
+		// Only allow authorized managers to set cooldown
+		if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+			log.Printf("DEBUG: User %d (@%s) tried to use /cooldown but is not authorized",
+				update.Message.From.ID, update.Message.From.UserName)
+			return true
+		}
+
+		args := update.Message.CommandArguments()
+		if args == "" {
+			// Just show current settings
+			minutes := settings.CheckCooldown.Minutes()
+			var status string
+			if minutes <= 0 {
+				status = "Cooldown system is disabled. All messages are checked."
+			} else {
+				status = fmt.Sprintf("Current cooldown is %.1f minutes between checks for the same user.", minutes)
+			}
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, status)
+			bot.Send(msg)
+			return true
+		}
+
+		// Parse minutes value
+		minutes, err := strconv.ParseFloat(args, 64)
+		if err != nil || minutes < 0 {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				"Invalid value. Please provide a non-negative number of minutes for cooldown.")
+			bot.Send(msg)
+			return true
+		}
+
+		// Set the new cooldown
+		settings.CheckCooldown = time.Duration(minutes * float64(time.Minute))
+
+		// Format response message
+		var responseText string
+		if minutes == 0 {
+			responseText = "Cooldown disabled. All messages will be checked."
+		} else {
+			responseText = fmt.Sprintf("Cooldown set to %.1f minutes between checks for the same user.", minutes)
+		}
+
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText)
+		bot.Send(msg)
+
+	case "add":
+		// Only allow authorized managers to add usernames
+		if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+			log.Printf("DEBUG: User %d (@%s) tried to use /add but is not authorized",
+				update.Message.From.ID, update.Message.From.UserName)
+			return true
+		}
+
+		// Parse username to add to protected list
+		args := update.Message.CommandArguments()
+		if args == "" {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				"Please specify a username to add to the protected list.\n\n"+
+					"Format: /add [username]\n\n"+
+					"Note: Do not include the @ symbol.")
+			bot.Send(msg)
+			return true
+		}
+
+		// Attempt to add username to file
+		usernamesFile := "usernames.txt"
+		err := SaveUsernameToFile(usernamesFile, args)
+		if err != nil {
+			log.Printf("ERROR: Failed to add username '%s' to file: %v", args, err)
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				fmt.Sprintf("Failed to add username to protected list: %v", err))
+			bot.Send(msg)
+			return true
+		}
+
+		// Reload the usernames list
+		usernames, err := LoadUsernamesFromFile(usernamesFile)
+		if err != nil {
+			log.Printf("ERROR: Failed to reload usernames after adding: %v", err)
+		} else {
+			KnownUsernames = usernames
+			log.Printf("Reloaded %d usernames from file after adding new username", len(usernames))
+		}
+
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+			fmt.Sprintf("Username `%s` added to the protected list. Total protected usernames: %d",
+				args, len(KnownUsernames)))
+		msg.ParseMode = "Markdown"
+		bot.Send(msg)
+
+	case "remove":
+		// Only allow authorized managers to remove usernames
+		if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+			log.Printf("DEBUG: User %d (@%s) tried to use /remove but is not authorized",
+				update.Message.From.ID, update.Message.From.UserName)
+			return true
+		}
+
+		// Parse username to remove from protected list
+		args := update.Message.CommandArguments()
+		if args == "" {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				"Please specify a username to remove from the protected list.\n\n"+
+					"Format: /remove [username]\n\n"+
+					"Note: Do not include the @ symbol.")
+			bot.Send(msg)
+			return true
+		}
+
+		// Attempt to remove username from file
+		usernamesFile := "usernames.txt"
+		err := RemoveUsernameFromFile(usernamesFile, args)
+		if err != nil {
+			log.Printf("ERROR: Failed to remove username '%s' from file: %v", args, err)
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				fmt.Sprintf("Failed to remove username from protected list: %v", err))
+			bot.Send(msg)
+			return true
+		}
+
+		// Reload the usernames list
+		usernames, err := LoadUsernamesFromFile(usernamesFile)
+		if err != nil {
+			log.Printf("ERROR: Failed to reload usernames after removing: %v", err)
+		} else {
+			KnownUsernames = usernames
+			log.Printf("Reloaded %d usernames from file after removing username", len(usernames))
+		}
+
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+			fmt.Sprintf("Username `%s` removed from the protected list. Total protected usernames: %d",
+				args, len(KnownUsernames)))
+		msg.ParseMode = "Markdown"
+		bot.Send(msg)
+
+	case "list":
+		// Only allow authorized managers to list protected usernames
+		if !settings.ExceptionAuth.IsAuthorized(update.Message.From.ID) {
+			log.Printf("DEBUG: User %d (@%s) tried to use /list but is not authorized",
+				update.Message.From.ID, update.Message.From.UserName)
+			return true
+		}
+
+		// Provide a list of all protected usernames
+		if len(KnownUsernames) == 0 {
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				"No protected usernames configured. Use /add [username] to add usernames to the protected list.")
+			bot.Send(msg)
+			return true
+		}
+
+		var responseText strings.Builder
+		responseText.WriteString(fmt.Sprintf("📋 Protected Usernames (%d):\n\n", len(KnownUsernames)))
+
+		// Limit the display to avoid hitting message length limits
+		maxDisplay := 50
+		for i, username := range KnownUsernames {
+			if i < maxDisplay {
+				responseText.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, username))
+			} else {
+				responseText.WriteString(fmt.Sprintf("\n... and %d more usernames", len(KnownUsernames)-maxDisplay))
+				break
+			}
+		}
+
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseText.String())
 		msg.ParseMode = "Markdown"
 		bot.Send(msg)
 

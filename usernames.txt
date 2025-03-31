@@ -28,6 +28,7 @@ customer support
 safeguard
 admin
 alephium dev
+teamuguarid
 
 #Community Mods
 cgi_bin
