@@ -674,7 +674,7 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			if admin.Username != "" {
 				adminUsernameLower := normalizeName(admin.Username)
 				similarity := JaroWinkler(username, adminUsernameLower)
-				if similarity >= settings.SimilarityThreshold { // Exclude exact matches
+				if similarity >= settings.SimilarityThreshold && similarity < 1.0 { // Exclude exact matches
 					similarToAdmins = append(similarToAdmins, SimilarUsernameResult{
 						Username:   "@" + admin.Username, // Keep original case for display
 						Similarity: similarity,
