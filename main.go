@@ -266,6 +266,10 @@ type BotSettings struct {
 	Exceptions *ExceptionsManager
 	// Exception Managers Auth
 	ExceptionAuth *ExceptionManagersAuth
+	// Warning cooldown settings
+	WarningCooldown time.Duration       // How long to wait before sending another warning in the same chat
+	LastWarningSent map[int64]time.Time // Track when the last warning was sent for each chat
+	WarningMutex    sync.RWMutex
 }
 
 // IsRecentlyChecked determines if a user was recently checked
@@ -349,6 +353,54 @@ func DeleteMessage(bot *tgbotapi.BotAPI, chatID int64, messageID int) error {
 	return err
 }
 
+// IsWarningOnCooldown checks if a warning can be sent for a chat
+func (s *BotSettings) IsWarningOnCooldown(chatID int64) bool {
+	s.WarningMutex.RLock()
+	defer s.WarningMutex.RUnlock()
+
+	if lastWarning, exists := s.LastWarningSent[chatID]; exists {
+		timeSince := time.Since(lastWarning)
+		log.Printf("DEBUG: Last warning in chat %d was sent %.1f minutes ago (cooldown: %.1f minutes)",
+			chatID, timeSince.Minutes(), s.WarningCooldown.Minutes())
+		return timeSince < s.WarningCooldown
+	}
+	log.Printf("DEBUG: No previous warning found for chat %d", chatID)
+	return false
+}
+
+// MarkWarningSent records when a warning was sent for a chat
+func (s *BotSettings) MarkWarningSent(chatID int64) {
+	s.WarningMutex.Lock()
+	defer s.WarningMutex.Unlock()
+
+	s.LastWarningSent[chatID] = time.Now()
+	log.Printf("DEBUG: Marked warning as sent for chat %d at %s",
+		chatID, time.Now().Format(time.RFC3339))
+}
+
+// CleanupOldWarnings removes entries older than the cooldown period
+func (s *BotSettings) CleanupOldWarnings() {
+	s.WarningMutex.Lock()
+	defer s.WarningMutex.Unlock()
+
+	before := len(s.LastWarningSent)
+
+	for chatID, lastWarning := range s.LastWarningSent {
+		timeSince := time.Since(lastWarning)
+		if timeSince > s.WarningCooldown {
+			log.Printf("DEBUG: Removing chat %d from warning cooldown list (last warning %.1f minutes ago)",
+				chatID, timeSince.Minutes())
+			delete(s.LastWarningSent, chatID)
+		}
+	}
+
+	after := len(s.LastWarningSent)
+	if before != after {
+		log.Printf("DEBUG: Cleanup removed %d chats from warning cooldown list, %d remaining",
+			before-after, after)
+	}
+}
+
 func main() {
 	// Try to load from .env file first
 	loadEnvFile(".env")
@@ -408,6 +460,8 @@ func main() {
 		AdminCacheExpiry:    1 * time.Hour, // Default to refresh admin cache every hour
 		Exceptions:          NewExceptionsManager("exceptions.txt"),
 		ExceptionAuth:       exceptionAuth,
+		WarningCooldown:     10 * time.Minute, // Default warning cooldown: 10 minutes
+		LastWarningSent:     make(map[int64]time.Time),
 	}
 
 	// Set similarity threshold from env or default to 0.8
@@ -488,6 +542,16 @@ func main() {
 
 		for range ticker.C {
 			settings.CleanupOldChecks()
+		}
+	}()
+
+	// Start a goroutine to periodically clean up old warning entries
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			settings.CleanupOldWarnings()
 		}
 	}()
 
@@ -840,6 +904,12 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			}
 		}
 
+		// Check if warning is on cooldown for this chat
+		if settings.IsWarningOnCooldown(chatID) {
+			log.Printf("DEBUG: Warning for chat %d is on cooldown, skipping notification", chatID)
+			return
+		}
+
 		// Build notification message
 		var notificationText string
 		var userIdentifier string
@@ -1027,7 +1097,9 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		_, err := bot.Send(msg)
 		if err != nil {
 			log.Printf("ERROR: Failed to send similarity notification: %v", err)
-
+		} else {
+			// Mark warning as sent for this chat if notification was successful
+			settings.MarkWarningSent(chatID)
 		}
 
 		// If audit group is configured, send a copy there too

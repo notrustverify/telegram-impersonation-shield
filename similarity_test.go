@@ -88,6 +88,7 @@ func TestDeveloperUsernameSimilarity(t *testing.T) {
 		"nop_33",
 		"h0ngcha0",
 		"hongcha0",
+		"Cheng/Alephium",
 	}
 
 	// Test similar usernames
@@ -125,6 +126,10 @@ func TestDeveloperUsernameSimilarity(t *testing.T) {
 
 		"hOngchaO", "h0ngch4o", "h0ngchao_", "hongcha0", "h0ng_ch4o",
 		"h0ngcha00", "h0ngch_ao", "h_ongchao", "h0_ngchaO",
+
+		"kira_alephium",
+
+		"Cheng/Alephium",
 	}
 
 	// Generate similarity report
