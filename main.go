@@ -904,12 +904,6 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 			}
 		}
 
-		// Check if warning is on cooldown for this chat
-		if settings.IsWarningOnCooldown(chatID) {
-			log.Printf("DEBUG: Warning for chat %d is on cooldown, skipping notification", chatID)
-			return
-		}
-
 		// Build notification message
 		var notificationText string
 		var userIdentifier string
@@ -1083,6 +1077,8 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		}
 
 		// Create message config
+		// Check if warning is on cooldown for this chat
+
 		msg := tgbotapi.NewMessage(chatID, notificationText)
 		msg.ParseMode = "Markdown"
 
@@ -1094,16 +1090,27 @@ func checkAndMuteUser(bot *tgbotapi.BotAPI, settings *BotSettings, chatID int64,
 		}
 
 		// Send notification to the chat
-		_, err := bot.Send(msg)
-		if err != nil {
-			log.Printf("ERROR: Failed to send similarity notification: %v", err)
-		} else {
-			// Mark warning as sent for this chat if notification was successful
-			settings.MarkWarningSent(chatID)
+		if !settings.IsWarningOnCooldown(chatID) {
+			_, err := bot.Send(msg)
+			if err != nil {
+				log.Printf("ERROR: Failed to send similarity notification: %v", err)
+			} else {
+				// Mark warning as sent for this chat if notification was successful
+				settings.MarkWarningSent(chatID)
+			}
 		}
 
 		// If audit group is configured, send a copy there too
 		if settings.AuditGroupID != 0 {
+			var err error
+			// Verify the audit group exists and is accessible
+			chat, err := bot.GetChat(tgbotapi.ChatInfoConfig{ChatConfig: tgbotapi.ChatConfig{ChatID: settings.AuditGroupID}})
+			if err != nil {
+				log.Printf("ERROR: Failed to access audit group %d: %v", settings.AuditGroupID, err)
+				return
+			}
+			log.Printf("DEBUG: Successfully verified audit group: %s (ID: %d)", chat.Title, chat.ID)
+
 			// Create a concise audit message with only similarity information
 			var auditText strings.Builder
 			fmt.Fprintf(&auditText, "🔍 Audit from chat %s (ID: %d):\n\n", chatTitle, chatID)
